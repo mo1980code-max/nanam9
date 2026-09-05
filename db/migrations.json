@@ -1,0 +1,38 @@
+{
+  "_note": [
+    "Steps to upgrade an installed copy from one schema_version to the next.",
+    "Fresh installs run db/schema.<driver>.sql in full, then get stamped with the highest key here.",
+    "Pre-bucket installs (before schema_version existed) report version 0 and walk the whole file;",
+    "v1/v2 never shipped to a buyer, so '3' is the first real step.",
+    "The Migrator tolerates these per-statement errors so a half-applied step can re-run:",
+    "mysql 1060 duplicate column / 1061 duplicate key / 1091 missing column-key on DROP;",
+    "sqlite duplicate column / already exists / no such <object>."
+  ],
+  "3": {
+    "note": "leaderboard time buckets: period + period_key columns, bucket-aware unique keys",
+    "mysql": [
+      "ALTER TABLE `leaderboard` ADD COLUMN `period` VARCHAR(8) NOT NULL DEFAULT 'all' AFTER `score`",
+      "ALTER TABLE `leaderboard` ADD COLUMN `period_key` VARCHAR(12) NOT NULL DEFAULT 'all' AFTER `period`",
+      "UPDATE `leaderboard` SET `period` = 'week', `period_key` = `week_key` WHERE `week_key` <> ''",
+      "UPDATE `leaderboard` SET `period` = 'all', `period_key` = 'all' WHERE `week_key` = ''",
+      "ALTER TABLE `leaderboard` DROP INDEX `uq_leaderboard_game_id_user_id_week_key`",
+      "ALTER TABLE `leaderboard` DROP INDEX `idx_leaderboard_game_id_week_key_score`",
+      "ALTER TABLE `leaderboard` ADD UNIQUE INDEX `uq_leaderboard_game_id_user_id_period_period_key` (`game_id`, `user_id`, `period`, `period_key`)",
+      "ALTER TABLE `leaderboard` ADD UNIQUE INDEX `uq_leaderboard_game_id_alias_period_period_key` (`game_id`, `alias`, `period`, `period_key`)",
+      "ALTER TABLE `leaderboard` ADD INDEX `idx_leaderboard_game_id_period_period_key_score` (`game_id`, `period`, `period_key`, `score`)",
+      "ALTER TABLE `leaderboard` ADD INDEX `idx_leaderboard_period_period_key_score` (`period`, `period_key`, `score`)"
+    ],
+    "sqlite": [
+      "ALTER TABLE \"leaderboard\" ADD COLUMN \"period\" TEXT NOT NULL DEFAULT 'all'",
+      "ALTER TABLE \"leaderboard\" ADD COLUMN \"period_key\" TEXT NOT NULL DEFAULT 'all'",
+      "UPDATE \"leaderboard\" SET \"period\" = 'week', \"period_key\" = \"week_key\" WHERE \"week_key\" <> ''",
+      "UPDATE \"leaderboard\" SET \"period\" = 'all', \"period_key\" = 'all' WHERE \"week_key\" = ''",
+      "DROP INDEX IF EXISTS \"uq_leaderboard_game_id_user_id_week_key\"",
+      "DROP INDEX IF EXISTS \"idx_leaderboard_game_id_week_key_score\"",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"uq_leaderboard_game_id_user_id_period_period_key\" ON \"leaderboard\" (\"game_id\", \"user_id\", \"period\", \"period_key\")",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"uq_leaderboard_game_id_alias_period_period_key\" ON \"leaderboard\" (\"game_id\", \"alias\", \"period\", \"period_key\")",
+      "CREATE INDEX IF NOT EXISTS \"idx_leaderboard_game_id_period_period_key_score\" ON \"leaderboard\" (\"game_id\", \"period\", \"period_key\", \"score\")",
+      "CREATE INDEX IF NOT EXISTS \"idx_leaderboard_period_period_key_score\" ON \"leaderboard\" (\"period\", \"period_key\", \"score\")"
+    ]
+  }
+}

@@ -1,0 +1,1203 @@
+{
+ "_note": "Canonical schema. db/schema.{mysql,sqlite}.sql are GENERATED from this file by tools/gen_schema_sql.py and must never be hand-edited. Upgrades for existing installs live in db/migrations.json and are applied by Nawras\\Db\\Migrator through schema_version.",
+ "dialects": {
+  "mysql": "InnoDB + utf8mb4_unicode_ci; FULLTEXT on games search columns; upserts use ON DUPLICATE KEY UPDATE",
+  "sqlite": "single file at var/arcade.sqlite; LIKE search; upserts use ON CONFLICT DO UPDATE"
+ },
+ "tables": {
+  "settings": {
+   "columns": {
+    "key_name": {
+     "type": "slug"
+    },
+    "value_type": {
+     "type": "string",
+     "size": 16,
+     "default": "string"
+    },
+    "value_text": {
+     "type": "text",
+     "null": true
+    },
+    "updated_at": {
+     "type": "datetime"
+    }
+   },
+   "pk": "key_name",
+   "no_id": true,
+   "note": "key/value site settings so the admin can change copy without a deploy"
+  },
+  "users": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "username": {
+     "type": "slug"
+    },
+    "email": {
+     "type": "string",
+     "size": 190,
+     "null": true
+    },
+    "password_hash": {
+     "type": "string",
+     "size": 255
+    },
+    "display_name": {
+     "type": "string",
+     "size": 64,
+     "null": true
+    },
+    "role": {
+     "type": "string",
+     "size": 16,
+     "default": "admin"
+    },
+    "locale": {
+     "type": "string",
+     "size": 5,
+     "default": "ar"
+    },
+    "xp": {
+     "type": "int",
+     "default": 0
+    },
+    "disabled_at": {
+     "type": "datetime",
+     "null": true
+    },
+    "created_at": {
+     "type": "datetime"
+    },
+    "updated_at": {
+     "type": "datetime",
+     "null": true
+    }
+   },
+   "uniques": [
+    [
+     "username"
+    ],
+    [
+     "email"
+    ]
+   ]
+  },
+  "sessions": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "user_id": {
+     "type": "int",
+     "null": true,
+     "fk": "users.id"
+    },
+    "token_hash": {
+     "type": "string",
+     "size": 64
+    },
+    "ip": {
+     "type": "string",
+     "size": 45,
+     "null": true
+    },
+    "data_json": {
+     "type": "longtext",
+     "null": true
+    },
+    "last_seen_at": {
+     "type": "datetime"
+    },
+    "expires_at": {
+     "type": "datetime"
+    }
+   },
+   "uniques": [
+    [
+     "token_hash"
+    ]
+   ],
+   "indexes": [
+    [
+     "expires_at"
+    ]
+   ],
+   "note": "admin sessions are ours, not PHP's, so a shared host cannot leak them via /tmp"
+  },
+  "categories": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "slug": {
+     "type": "slug"
+    },
+    "name_ar": {
+     "type": "string",
+     "size": 96
+    },
+    "name_en": {
+     "type": "string",
+     "size": 96
+    },
+    "color": {
+     "type": "string",
+     "size": 16,
+     "default": "#7c5cff"
+    },
+    "parent_id": {
+     "type": "int",
+     "null": true,
+     "fk": "categories.id"
+    },
+    "position": {
+     "type": "int",
+     "default": 0
+    },
+    "created_at": {
+     "type": "datetime"
+    }
+   },
+   "uniques": [
+    [
+     "slug"
+    ]
+   ],
+   "indexes": [
+    [
+     "position"
+    ],
+    [
+     "parent_id"
+    ]
+   ]
+  },
+  "games": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "slug": {
+     "type": "slug"
+    },
+    "slug_ar": {
+     "type": "string",
+     "size": 80,
+     "null": true
+    },
+    "title_ar": {
+     "type": "string",
+     "size": 120
+    },
+    "title_en": {
+     "type": "string",
+     "size": 120
+    },
+    "desc_ar": {
+     "type": "text",
+     "null": true
+    },
+    "desc_en": {
+     "type": "text",
+     "null": true
+    },
+    "howto_ar": {
+     "type": "text",
+     "null": true
+    },
+    "howto_en": {
+     "type": "text",
+     "null": true
+    },
+    "category_id": {
+     "type": "int",
+     "null": true,
+     "fk": "categories.id"
+    },
+    "kind": {
+     "type": "string",
+     "size": 12,
+     "default": "feed"
+    },
+    "provider": {
+     "type": "string",
+     "size": 32,
+     "default": "own"
+    },
+    "external_id": {
+     "type": "string",
+     "size": 64,
+     "null": true
+    },
+    "embed_url": {
+     "type": "string",
+     "size": 255,
+     "default": ""
+    },
+    "local_path": {
+     "type": "string",
+     "size": 190,
+     "default": ""
+    },
+    "runtime_module": {
+     "type": "string",
+     "size": 64,
+     "default": ""
+    },
+    "poster_path": {
+     "type": "string",
+     "size": 190,
+     "default": ""
+    },
+    "aspect": {
+     "type": "string",
+     "size": 8,
+     "default": "16/9"
+    },
+    "devices": {
+     "type": "string",
+     "size": 48,
+     "default": "desktop,mobile,tablet"
+    },
+    "controls": {
+     "type": "string",
+     "size": 48,
+     "default": "pointer"
+    },
+    "players": {
+     "type": "string",
+     "size": 12,
+     "default": "solo"
+    },
+    "age_rating": {
+     "type": "string",
+     "size": 12,
+     "default": "all"
+    },
+    "kid_friendly": {
+     "type": "bool",
+     "default": 1
+    },
+    "featured": {
+     "type": "bool",
+     "default": 0
+    },
+    "status": {
+     "type": "string",
+     "size": 16,
+     "default": "draft"
+    },
+    "plays_count": {
+     "type": "int",
+     "default": 0
+    },
+    "plays_7d": {
+     "type": "int",
+     "default": 0
+    },
+    "likes_count": {
+     "type": "int",
+     "default": 0
+    },
+    "rating_sum": {
+     "type": "int",
+     "default": 0
+    },
+    "rating_count": {
+     "type": "int",
+     "default": 0
+    },
+    "published_at": {
+     "type": "datetime",
+     "null": true
+    },
+    "created_at": {
+     "type": "datetime"
+    },
+    "updated_at": {
+     "type": "datetime"
+    }
+   },
+   "uniques": [
+    [
+     "slug"
+    ],
+    [
+     "provider",
+     "external_id"
+    ]
+   ],
+   "indexes": [
+    [
+     "status"
+    ],
+    [
+     "category_id"
+    ],
+    [
+     "featured",
+     "plays_count"
+    ],
+    [
+     "kind"
+    ],
+    [
+     "plays_7d"
+    ]
+   ],
+   "fulltext": [
+    "title_ar",
+    "title_en",
+    "desc_ar",
+    "desc_en"
+   ],
+   "note": "provider+external_id is the idempotency key every feed sync relies on. external_id is NULLABLE on purpose: own/uploaded rows have no external id, and a unique index never collides on NULL. A NOT NULL DEFAULT '' here would allow exactly ONE own game per install (bug caught by tools/prove_runtime.py proof C)"
+  },
+  "game_licenses": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "game_id": {
+     "type": "int",
+     "fk": "games.id"
+    },
+    "provider": {
+     "type": "string",
+     "size": 32,
+     "default": "own"
+    },
+    "external_id": {
+     "type": "string",
+     "size": 64,
+     "null": true
+    },
+    "license_type": {
+     "type": "string",
+     "size": 16
+    },
+    "license_ref": {
+     "type": "string",
+     "size": 48
+    },
+    "upstream_repo": {
+     "type": "string",
+     "size": 190,
+     "default": ""
+    },
+    "commit_sha": {
+     "type": "string",
+     "size": 40,
+     "default": ""
+    },
+    "license_path": {
+     "type": "string",
+     "size": 190,
+     "default": ""
+    },
+    "license_file": {
+     "type": "string",
+     "size": 190,
+     "default": ""
+    },
+    "license_sha256": {
+     "type": "string",
+     "size": 64,
+     "default": ""
+    },
+    "proof_url": {
+     "type": "string",
+     "size": 255,
+     "default": ""
+    },
+    "invoice_ref": {
+     "type": "string",
+     "size": 64,
+     "default": ""
+    },
+    "allow_origins": {
+     "type": "string",
+     "size": 255,
+     "default": ""
+    },
+    "attribution_required": {
+     "type": "bool",
+     "default": 0
+    },
+    "attribution_html": {
+     "type": "text",
+     "null": true
+    },
+    "captured_at": {
+     "type": "date",
+     "null": true
+    },
+    "expires_at": {
+     "type": "date",
+     "null": true
+    },
+    "status": {
+     "type": "string",
+     "size": 16,
+     "default": "active"
+    },
+    "notes": {
+     "type": "text",
+     "null": true
+    },
+    "created_at": {
+     "type": "datetime"
+    },
+    "updated_at": {
+     "type": "datetime"
+    }
+   },
+   "uniques": [
+    [
+     "game_id",
+     "provider",
+     "external_id"
+    ]
+   ],
+   "indexes": [
+    [
+     "status"
+    ],
+    [
+     "license_type"
+    ],
+    [
+     "expires_at"
+    ]
+   ],
+   "note": "the product's core table: no game is visible unless a row here says why"
+  },
+  "takedowns": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "game_id": {
+     "type": "int",
+     "null": true,
+     "fk": "games.id"
+    },
+    "slug_claim": {
+     "type": "string",
+     "size": 80,
+     "default": ""
+    },
+    "reporter_name": {
+     "type": "string",
+     "size": 120
+    },
+    "reporter_email": {
+     "type": "string",
+     "size": 190
+    },
+    "reporter_org": {
+     "type": "string",
+     "size": 120,
+     "null": true
+    },
+    "work_title": {
+     "type": "string",
+     "size": 190
+    },
+    "work_url": {
+     "type": "string",
+     "size": 255,
+     "null": true
+    },
+    "our_url": {
+     "type": "string",
+     "size": 255
+    },
+    "basis": {
+     "type": "string",
+     "size": 16,
+     "default": "copyright"
+    },
+    "statement_good_faith": {
+     "type": "bool",
+     "default": 0
+    },
+    "statement_under_penalty": {
+     "type": "bool",
+     "default": 0
+    },
+    "signature": {
+     "type": "string",
+     "size": 190,
+     "null": true
+    },
+    "status": {
+     "type": "string",
+     "size": 16,
+     "default": "open"
+    },
+    "counter_notice": {
+     "type": "text",
+     "null": true
+    },
+    "action_taken": {
+     "type": "string",
+     "size": 190,
+     "null": true
+    },
+    "received_at": {
+     "type": "datetime"
+    },
+    "resolved_at": {
+     "type": "datetime",
+     "null": true
+    },
+    "handled_by": {
+     "type": "int",
+     "null": true,
+     "fk": "users.id"
+    }
+   },
+   "indexes": [
+    [
+     "status",
+     "received_at"
+    ],
+    [
+     "game_id"
+    ]
+   ]
+  },
+  "takedown_notices": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "takedown_id": {
+     "type": "int",
+     "fk": "takedowns.id"
+    },
+    "channel": {
+     "type": "string",
+     "size": 16,
+     "default": "email"
+    },
+    "recipient": {
+     "type": "string",
+     "size": 190
+    },
+    "subject": {
+     "type": "string",
+     "size": 190
+    },
+    "body": {
+     "type": "text"
+    },
+    "sent_at": {
+     "type": "datetime",
+     "null": true
+    },
+    "created_at": {
+     "type": "datetime"
+    }
+   },
+   "indexes": [
+    [
+     "takedown_id"
+    ]
+   ]
+  },
+  "audit_log": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "actor_label": {
+     "type": "string",
+     "size": 64,
+     "default": "system"
+    },
+    "action": {
+     "type": "string",
+     "size": 48
+    },
+    "entity": {
+     "type": "string",
+     "size": 32
+    },
+    "entity_id": {
+     "type": "int",
+     "null": true
+    },
+    "payload": {
+     "type": "longtext",
+     "null": true
+    },
+    "ip": {
+     "type": "string",
+     "size": 45,
+     "null": true
+    },
+    "created_at": {
+     "type": "datetime"
+    }
+   },
+   "indexes": [
+    [
+     "entity",
+     "entity_id"
+    ],
+    [
+     "action"
+    ],
+    [
+     "created_at"
+    ]
+   ]
+  },
+  "tags": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "slug": {
+     "type": "slug"
+    },
+    "name_ar": {
+     "type": "string",
+     "size": 64
+    },
+    "name_en": {
+     "type": "string",
+     "size": 64
+    }
+   },
+   "uniques": [
+    [
+     "slug"
+    ]
+   ]
+  },
+  "game_tag": {
+   "columns": {
+    "game_id": {
+     "type": "int",
+     "fk": "games.id"
+    },
+    "tag_id": {
+     "type": "int",
+     "fk": "tags.id"
+    }
+   },
+   "pk": "game_id,tag_id",
+   "no_id": true,
+   "indexes": [
+    [
+     "tag_id"
+    ]
+   ]
+  },
+  "collections": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "slug": {
+     "type": "slug"
+    },
+    "title_ar": {
+     "type": "string",
+     "size": 120
+    },
+    "title_en": {
+     "type": "string",
+     "size": 120
+    },
+    "blurb_ar": {
+     "type": "text",
+     "null": true
+    },
+    "blurb_en": {
+     "type": "text",
+     "null": true
+    },
+    "auto_rule": {
+     "type": "string",
+     "size": 190,
+     "null": true
+    },
+    "is_auto": {
+     "type": "bool",
+     "default": 0
+    },
+    "position": {
+     "type": "int",
+     "default": 0
+    }
+   },
+   "uniques": [
+    [
+     "slug"
+    ]
+   ]
+  },
+  "collection_game": {
+   "columns": {
+    "collection_id": {
+     "type": "int",
+     "fk": "collections.id"
+    },
+    "game_id": {
+     "type": "int",
+     "fk": "games.id"
+    },
+    "position": {
+     "type": "int",
+     "default": 0
+    }
+   },
+   "pk": "collection_id,game_id",
+   "no_id": true,
+   "indexes": [
+    [
+     "game_id"
+    ]
+   ]
+  },
+  "favorites": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "user_id": {
+     "type": "int",
+     "null": true,
+     "fk": "users.id"
+    },
+    "device_key": {
+     "type": "string",
+     "size": 64,
+     "null": true
+    },
+    "game_id": {
+     "type": "int",
+     "fk": "games.id"
+    },
+    "created_at": {
+     "type": "datetime"
+    }
+   },
+   "uniques": [
+    [
+     "user_id",
+     "game_id"
+    ],
+    [
+     "device_key",
+     "game_id"
+    ]
+   ]
+  },
+  "play_events": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "game_id": {
+     "type": "int",
+     "fk": "games.id"
+    },
+    "device_key": {
+     "type": "string",
+     "size": 64,
+     "null": true
+    },
+    "source": {
+     "type": "string",
+     "size": 16,
+     "default": "site"
+    },
+    "seconds": {
+     "type": "int",
+     "default": 0
+    },
+    "completed": {
+     "type": "bool",
+     "default": 0
+    },
+    "played_at": {
+     "type": "datetime"
+    }
+   },
+   "indexes": [
+    [
+     "game_id",
+     "played_at"
+    ],
+    [
+     "played_at"
+    ]
+   ]
+  },
+  "leaderboard": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "game_id": {
+     "type": "int",
+     "fk": "games.id"
+    },
+    "user_id": {
+     "type": "int",
+     "null": true,
+     "fk": "users.id"
+    },
+    "alias": {
+     "type": "string",
+     "size": 48,
+     "null": true
+    },
+    "score": {
+     "type": "int"
+    },
+    "period": {
+     "type": "string",
+     "size": 8,
+     "default": "all"
+    },
+    "period_key": {
+     "type": "string",
+     "size": 12,
+     "default": "all"
+    },
+    "week_key": {
+     "type": "string",
+     "size": 12,
+     "default": ""
+    },
+    "signature": {
+     "type": "string",
+     "size": 64,
+     "null": true
+    },
+    "submitted_at": {
+     "type": "datetime"
+    }
+   },
+   "uniques": [
+    [
+     "game_id",
+     "user_id",
+     "period",
+     "period_key"
+    ],
+    [
+     "game_id",
+     "alias",
+     "period",
+     "period_key"
+    ]
+   ],
+   "indexes": [
+    [
+     "game_id",
+     "period",
+     "period_key",
+     "score"
+    ],
+    [
+     "period",
+     "period_key",
+     "score"
+    ]
+   ],
+   "note": "one row per (game, player, time bucket). week_key stays for compatibility with installs predating buckets and mirrors period_key when period='week'"
+  },
+  "provider_games": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "provider": {
+     "type": "string",
+     "size": 32
+    },
+    "external_id": {
+     "type": "string",
+     "size": 64
+    },
+    "payload": {
+     "type": "longtext"
+    },
+    "fetched_at": {
+     "type": "datetime"
+    }
+   },
+   "uniques": [
+    [
+     "provider",
+     "external_id"
+    ]
+   ],
+   "indexes": [
+    [
+     "fetched_at"
+    ]
+   ]
+  },
+  "provider_runs": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "provider": {
+     "type": "string",
+     "size": 32
+    },
+    "status": {
+     "type": "string",
+     "size": 16,
+     "default": "ok"
+    },
+    "rows_seen": {
+     "type": "int",
+     "default": 0
+    },
+    "rows_new": {
+     "type": "int",
+     "default": 0
+    },
+    "rows_rejected": {
+     "type": "int",
+     "default": 0
+    },
+    "detail": {
+     "type": "text",
+     "null": true
+    },
+    "started_at": {
+     "type": "datetime"
+    },
+    "finished_at": {
+     "type": "datetime",
+     "null": true
+    }
+   },
+   "indexes": [
+    [
+     "provider",
+     "started_at"
+    ]
+   ]
+  },
+  "ads_slots": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "slot_key": {
+     "type": "string",
+     "size": 32
+    },
+    "client": {
+     "type": "string",
+     "size": 32
+    },
+    "slot_id": {
+     "type": "string",
+     "size": 32
+    },
+    "format": {
+     "type": "string",
+     "size": 16,
+     "default": "responsive"
+    },
+    "enabled": {
+     "type": "bool",
+     "default": 1
+    }
+   },
+   "uniques": [
+    [
+     "slot_key"
+    ]
+   ]
+  },
+  "ad_impressions": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "slot_key": {
+     "type": "string",
+     "size": 32
+    },
+    "game_id": {
+     "type": "int",
+     "null": true,
+     "fk": "games.id"
+    },
+    "day": {
+     "type": "date"
+    },
+    "views": {
+     "type": "int",
+     "default": 0
+    },
+    "clicks": {
+     "type": "int",
+     "default": 0
+    }
+   },
+   "uniques": [
+    [
+     "slot_key",
+     "game_id",
+     "day"
+    ]
+   ],
+   "indexes": [
+    [
+     "day"
+    ]
+   ]
+  },
+  "xp_events": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "device_key": {
+     "type": "string",
+     "size": 64
+    },
+    "game_id": {
+     "type": "int",
+     "null": true,
+     "fk": "games.id"
+    },
+    "amount": {
+     "type": "int"
+    },
+    "reason": {
+     "type": "string",
+     "size": 24
+    },
+    "created_at": {
+     "type": "datetime"
+    }
+   },
+   "indexes": [
+    [
+     "device_key",
+     "created_at"
+    ]
+   ]
+  },
+  "badges": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "slug": {
+     "type": "slug"
+    },
+    "name_ar": {
+     "type": "string",
+     "size": 64
+    },
+    "name_en": {
+     "type": "string",
+     "size": 64
+    },
+    "rule_json": {
+     "type": "text",
+     "null": true
+    }
+   },
+   "uniques": [
+    [
+     "slug"
+    ]
+   ]
+  },
+  "user_badges": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "device_key": {
+     "type": "string",
+     "size": 64
+    },
+    "badge_id": {
+     "type": "int",
+     "fk": "badges.id"
+    },
+    "awarded_at": {
+     "type": "datetime"
+    }
+   },
+   "uniques": [
+    [
+     "device_key",
+     "badge_id"
+    ]
+   ]
+  },
+  "i18n_overrides": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "locale": {
+     "type": "string",
+     "size": 5
+    },
+    "string_key": {
+     "type": "string",
+     "size": 96
+    },
+    "value": {
+     "type": "text"
+    },
+    "updated_at": {
+     "type": "datetime"
+    }
+   },
+   "uniques": [
+    [
+     "locale",
+     "string_key"
+    ]
+   ]
+  },
+  "schema_version": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "version": {
+     "type": "int"
+    },
+    "note": {
+     "type": "string",
+     "size": 190,
+     "default": ""
+    },
+    "applied_at": {
+     "type": "datetime"
+    }
+   },
+   "uniques": [
+    [
+     "version"
+    ]
+   ],
+   "note": "the table that makes an installed copy upgradable instead of reinstallable"
+  }
+ }
+}

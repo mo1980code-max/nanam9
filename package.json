@@ -1,0 +1,13 @@
+{
+  "name": "nawras-arcade",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Bilingual RTL-first arcade engine: one codebase, PHP 8.3 dynamic + static export, license ledger, bucketed leaderboard (8 CloudArcade-compatible period types) and schema migrations.",
+  "scripts": {
+    "verify": "python3 tools/verify_php.py",
+    "prove": "python3 tools/prove_runtime.py",
+    "schema": "python3 tools/gen_schema_sql.py --verify",
+    "bridge": "node --check public/assets/ca-compat.js",
+    "test": "npm run -s bridge && python3 tools/verify_php.py && python3 tools/prove_runtime.py && python3 tools/gen_schema_sql.py --verify && python3 -c \"import json;[json.load(open(f)) for f in ['db/schema.json','db/migrations.json']];print('✓ json valid')\""
+  }
+}

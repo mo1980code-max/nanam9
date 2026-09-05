@@ -1,0 +1,145 @@
+<!doctype html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>أركيد نورس — عرض حي للوحة الصدارة (8 أنماط)</title>
+<style>
+  :root{--bg:#0e1220;--card:#161b2e;--line:#2a3150;--ink:#e8eaf6;--dim:#9aa3c7;--acc:#7c5cff;--acc2:#38e1b5}
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,#221a4d,var(--bg));color:var(--ink);
+       font-family:'Segoe UI',Tahoma,sans-serif;min-height:100vh}
+  main{max-width:960px;margin:auto;padding:2rem 1.2rem 4rem}
+  header{display:flex;flex-wrap:wrap;gap:.8rem;align-items:center;justify-content:space-between}
+  h1{font-size:1.7rem;margin:.2rem 0} h1 span{color:var(--acc2)}
+  .badge{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:.25rem .8rem;font-size:.8rem;color:var(--dim)}
+  a.dl{color:var(--acc2);border-color:var(--acc2);text-decoration:none;font-weight:700} a.dl:hover{background:var(--acc2);color:#0e1220}
+  .tabs{display:flex;flex-wrap:wrap;gap:.5rem;margin:1.6rem 0 1rem}
+  .tab{background:var(--card);border:1px solid var(--line);color:var(--dim);border-radius:10px;
+       padding:.55rem 1rem;cursor:pointer;font-size:.95rem;transition:.15s}
+  .tab:hover{color:var(--ink)} .tab.on{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+  .row{display:flex;flex-wrap:wrap;gap:.8rem;align-items:center;margin-bottom:1rem}
+  select,input{background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:.5rem .8rem}
+  select:disabled{opacity:.4}
+  table{width:100%;border-collapse:collapse;background:var(--card);border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+  th,td{padding:.7rem .9rem;text-align:right;border-bottom:1px solid var(--line)}
+  th{background:#1a2140;color:#c3b8ff;font-size:.9rem}
+  tr:last-child td{border-bottom:0}
+  .rank{font-weight:700;color:var(--dim);width:3rem} .rank.r1{color:gold}.rank.r2{color:#cfd6ff}.rank.r3{color:#e0a878}
+  .score{font-weight:800;color:var(--acc2);direction:ltr;text-align:left;font-variant-numeric:tabular-nums}
+  .when{color:var(--dim);font-size:.85rem;direction:ltr;text-align:left}
+  .key{color:var(--dim);font-size:.85rem} .key code{background:#1d2440;border-radius:6px;padding:.1rem .45rem;direction:ltr;display:inline-block}
+  pre#out{background:#0b0f1d;border:1px solid var(--line);border-radius:12px;padding:1rem;overflow:auto;
+          direction:ltr;text-align:left;font-size:.8rem;line-height:1.5;color:#9ff2b8;white-space:pre-wrap}
+  nav a{color:#8ab4ff;text-decoration:none;margin-inline-end:1.2rem}
+  .note{color:var(--dim);font-size:.9rem;margin-top:2rem;border-right:3px solid var(--acc);padding-right:.8rem}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>أركيد نورس <span>— لوحة الصدارة بـ 8 أنماط</span></h1>
+    <div>
+      <span class="badge">PHP 8.3 + SQLite/MySQL</span>
+      <span class="badge">ترحيلات schema_version</span>
+      <span class="badge">عقد متوافق مع CloudArcade</span>
+      <a class="badge dl" href="/download" download>⬇ تحميل الحزمة nawras-arcade.zip</a>
+    </div>
+  </header>
+
+  <div class="tabs" id="tabs"></div>
+
+  <div class="row">
+    <label>اللعبة:</label>
+    <select id="game">
+      <option value="">— كل الألعاب (لأنماط top-all*) —</option>
+      <option value="neon-worm">نيون وورم</option>
+      <option value="echo-cards">إيكو كاردز</option>
+      <option value="bubble-nova">فقاعة نوفا</option>
+      <option value="maze-runner">عدّاء المتاهة</option>
+    </select>
+    <label>الحجم:</label>
+    <select id="amount"><option>5</option><option selected>10</option><option>20</option></select>
+    <span class="key" id="pkey"></span>
+  </div>
+
+  <table id="board">
+    <thead><tr><th>#</th><th>اللاعب</th><th>اللعبة</th><th>النتيجة</th><th>أُرسلت</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h2 style="margin-top:2.5rem">البوابات — مخرجات حية من هذا التشغيل</h2>
+  <pre id="out">…يُشغّل npm test…</pre>
+
+  <h2 style="margin-top:2.5rem">التوثيق</h2>
+  <nav>
+    <a href="/docs/LEADERBOARD.html">اللوحة والسلال الزمنية</a>
+    <a href="/docs/UPGRADING.html">الترحيلات</a>
+    <a href="/docs/CA-COMPAT.html">جسر ca_api</a>
+    <a href="/docs/README.html">README</a>
+  </nav>
+
+  <p class="note">
+    هذا العرض يُشغّل <b>نفس SQL</b> الذي ينفّذه صنف PHP الحقيقي (نفس أداة الإثبات التي تربطه
+    ببوابة التحقق)، على قاعدة SQLite مزروعة ببيانات موزّعة على اليوم/الأسبوع/الشهر/الأقدم —
+    جرّب الأنماط الثمانية ولاحظ اختلاف النتائج: «زياد 4000» يظهر في <code>top</code> فقط،
+    وكل لاعب يظهر مرة واحدة في <code>top-all*</code> بأفضل نتيجة عبر الألعاب.
+  </p>
+</main>
+
+<script>
+const TYPES = [
+  ['top','أفضل كل الأزمنة · لعبة'],
+  ['top-day','اليوم · لعبة'],
+  ['top-week','الأسبوع · لعبة'],
+  ['top-month','الشهر · لعبة'],
+  ['top-all','كل الأزمنة · كل الألعاب'],
+  ['top-all-day','اليوم · كل الألعاب'],
+  ['top-all-week','الأسبوع · كل الألعاب'],
+  ['top-all-month','الشهر · كل الألعاب'],
+];
+let cur = 'top-week';
+const tabs = document.getElementById('tabs');
+TYPES.forEach(([t, label]) => {
+  const b = document.createElement('button');
+  b.className = 'tab' + (t === cur ? ' on' : '');
+  b.textContent = label; b.dataset.t = t;
+  b.onclick = () => { cur = t; document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.dataset.t === t)); load(); };
+  tabs.appendChild(b);
+});
+const gameSel = document.getElementById('game'), amountSel = document.getElementById('amount');
+gameSel.onchange = amountSel.onchange = load;
+
+function syncGameLock() {
+  const perGame = !cur.startsWith('top-all');
+  gameSel.disabled = false;
+  if (perGame && !gameSel.value) gameSel.value = 'neon-worm';
+}
+
+async function load() {
+  syncGameLock();
+  const qs = new URLSearchParams({ type: cur, amount: amountSel.value });
+  if (gameSel.value) qs.set('game', gameSel.value);
+  const res = await fetch('/api/leaderboard?' + qs);
+  const data = await res.json();
+  document.getElementById('pkey').innerHTML =
+    data.ok ? ('مفتاح الفترة الحالي: <code>' + data.period_key + '</code>') : ('⚠ ' + data.error);
+  const tb = document.querySelector('#board tbody');
+  tb.innerHTML = '';
+  (data.rows || []).forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="rank r${r.rank}">${r.rank}</td>
+      <td>${r.alias}</td>
+      <td>${data.game ? '—' : r.game_slug}</td>
+      <td class="score">${r.score}</td>
+      <td class="when">${r.submitted_at}</td>`;
+    tb.appendChild(tr);
+  });
+  if (!data.rows || !data.rows.length) tb.innerHTML = '<tr><td colspan="5" style="color:#9aa3c7">لا نتائج في هذه السلة</td></tr>';
+}
+
+fetch('/api/gates').then(r => r.json()).then(d => document.getElementById('out').textContent = d.output);
+load();
+</script>
+</body>
+</html>

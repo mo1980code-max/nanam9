@@ -1,0 +1,8 @@
+# runtime state & secrets — never ship or commit these
+var/
+config/config.php
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+node_modules/
+vendor/
