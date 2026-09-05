@@ -20,9 +20,10 @@ use RuntimeException;
  * pinned to a full commit sha.** "We took it from GitHub" is not provenance; "we took commit
  * 9f2c1ab… whose LICENSE hashes to e3b0c44…" is.
  *
- * db/oss_pack.json ships as a worked example (five entries, two of them deliberately broken) so a
- * buyer sees the gate reject something before they trust it to accept something. Curating the real
- * 50-game pack is data entry against this format — the validator, not the list, is the product.
+ * db/oss_pack.json ships seven REAL pinned upstreams (each commit_sha + licence hash captured and
+ * cross-checked against GitHub) plus three deliberately broken fixtures, so a buyer sees the gate
+ * reject something before they trust it to accept something. Growing the catalogue further is data
+ * entry against this format — the validator, not the list, is the product.
  */
 final class OssPack
 {
