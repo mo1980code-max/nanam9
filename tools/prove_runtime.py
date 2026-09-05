@@ -1223,10 +1223,11 @@ def proof_e() -> None:
     pack = Pack(json.loads((ROOT / "db" / "oss_pack.json").read_text(encoding="utf-8")), policy)
     report = pack.verify_all()
     by_slug = {r["slug"]: r for r in report["entries"]}
-    check("the shipped pack is 3 accepted / 3 rejected",
-          (report["accepted"], report["rejected"]) == (3, 3),
+    check("the shipped pack is 7 accepted / 3 rejected",
+          (report["accepted"], report["rejected"]) == (7, 3),
           f"accepted={report['accepted']} rejected={report['rejected']}")
-    for slug in ("neon-racer", "pixel-jumper", "star-sweeper"):
+    for slug in ("2048", "pacman-canvas", "tanks-of-freedom", "hextris",
+                 "underrun", "clumsy-bird", "hexgl"):
         check(f"pack accepts {slug}", by_slug[slug]["ok"] is True, str(by_slug[slug]))
     check("pack rejects an entry with no licence hash",
           by_slug["ghost-maze"]["verdict"] == "incomplete"
@@ -1235,8 +1236,11 @@ def proof_e() -> None:
           by_slug["turbo-drift"]["reasons"] == ["no_redistribution"], str(by_slug["turbo-drift"]["reasons"]))
     check("pack rejects an unknown licence type",
           by_slug["void-runner"]["reasons"] == ["unknown_license_type"], str(by_slug["void-runner"]["reasons"]))
-    check("pack attribution survives for cc-by",
-          policy.attribution(pack.license_row(pack.doc["entries"][1])) is not None)
+    cc_by_sample = pack.license_row({
+        "slug": "cc-by-sample", "license_type": "cc-by", "license_ref": "CC BY 4.0",
+        "attribution_required": 1, "attribution_html": "Sample by Example, CC BY 4.0",
+    })
+    check("pack attribution survives for cc-by", policy.attribution(cc_by_sample) is not None)
 
     # --- E3: feed ingestion, on a real database
     conn = fresh_conn()
