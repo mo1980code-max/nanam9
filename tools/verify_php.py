@@ -20,6 +20,20 @@ What it checks (each was proven non-vacuous by injecting a bug and watching exit
   6. migrations        — db/migrations.json parses; the highest version equals
                          Migrator::CURRENT; every step has both dialect lists.
   7. JS bridge         — ca-compat.js only references the eight documented leaderboard types.
+ 11. autoload/require  — every class sits where PSR-4 will look for it and every resolvable
+                         require points at a file that exists (both fatal only at request time).
+ 10. install + export  — the installer's SQL is the SQL the runtime proof executes, a refused game
+                         produces no exported file, and every SELECT names a real column.
+  9. providers         — the reserved-range lists, the required-field lists and the feed SQL in
+                         src/Providers/ are byte-identical to what tools/prove_runtime.py attacks,
+                         the cloud-metadata and loopback ranges are present, and no feed can reach
+                         the network or the catalogue past UrlGuard + LicensePolicy.
+  8. licensing         — db/license_rules.json is the ONLY place a licence type is named (no type
+                         string in src/Licensing/ code), LicensePolicy::CODES and the policy's
+                         finding_labels are the same set in both directions, the auditor's SQL is
+                         literally the SQL tools/prove_runtime.py proves, migration CREATE TABLE
+                         blocks match the generated schema column-for-column, and both write
+                         endpoints really do pass the licence gate.
 
 Exit 0 = everything holds. Any finding exits 1.
 """
@@ -55,8 +69,12 @@ def check(label: str, cond: bool, detail: str = "") -> None:
 
 
 # --------------------------------------------------------------------------- php "lexer"
-def strip_php(source: str) -> tuple[str, str]:
-    """Returns (code_with_strings_blanked, raw_source)."""
+def strip_php(source: str, keep_strings: bool = False) -> tuple[str, str]:
+    """Returns (code_with_strings_blanked, raw_source).
+
+    keep_strings=True still removes comments but preserves string contents — used by the licence
+    purity gate, which must see a hardcoded 'type' literal in code while ignoring docblock prose.
+    """
     out = []
     i, n = 0, len(source)
     in_line_comment = in_block_comment = in_single = in_double = False
@@ -78,24 +96,30 @@ def strip_php(source: str) -> tuple[str, str]:
             out.append("\n" if c == "\n" else " ")
             i += 1
             continue
+        # String CONTENT becomes "x", not spaces: blanking it to whitespace made a call whose only
+        # argument is a string literal look like a ZERO-argument call, so every arity check on
+        # $db->one('SELECT ...') compared 0 against the declared minimum. "x" keeps the length and
+        # keeps parentheses inside strings from leaking into the balanced-argument scan.
         if in_single:
             if c == "\\":
-                out.append("  ")
+                out.append((c + (source[i + 1] if i + 1 < n else " ")) if keep_strings else "xx")
                 i += 2
                 continue
-            if c == "'":
+            closing = c == "'"
+            if closing:
                 in_single = False
-            out.append(" ")
+            out.append(c if keep_strings else (" " if closing else "x"))
             i += 1
             continue
         if in_double:
             if c == "\\":
-                out.append("  ")
+                out.append((c + (source[i + 1] if i + 1 < n else " ")) if keep_strings else "xx")
                 i += 2
                 continue
-            if c == '"':
+            closing = c == '"'
+            if closing:
                 in_double = False
-            out.append(" ")
+            out.append(c if keep_strings else (" " if closing else "x"))
             i += 1
             continue
         if c == "/" and nxt == "/":
@@ -113,12 +137,12 @@ def strip_php(source: str) -> tuple[str, str]:
             continue
         if c == "'":
             in_single = True
-            out.append(" ")
+            out.append(c if keep_strings else " ")
             i += 1
             continue
         if c == '"':
             in_double = True
-            out.append(" ")
+            out.append(c if keep_strings else " ")
             i += 1
             continue
         out.append(c)
@@ -135,7 +159,9 @@ class Klass:
     def __init__(self, name: str):
         self.name = name
         self.ctor_args: list[str] = []      # promoted property names
+        self.ctor_required: int = 0         # ctor params without a default
         self.methods: dict[str, int] = {}   # name -> arg count
+        self.min_args: dict[str, int] = {}  # name -> params without a default
         self.props: dict[str, str] = {}     # prop name -> class type
 
 
@@ -147,9 +173,11 @@ def parse_class(code: str) -> Klass:
         for part in ctor.group(1).split(","):
             part = part.strip()
             pm = re.match(
-                r"((?:(?:private|public|protected|readonly)\s+)*)([\w\\]+)\s+\$(\w+)", part)
+                r"((?:(?:private|public|protected|readonly)\s+)*)(\??[\w\\|]+)\s+\$(\w+)", part)
             if pm:
                 k.ctor_args.append(pm.group(3))
+                if "=" not in part:
+                    k.ctor_required += 1
                 # promoted property (has a visibility modifier) -> typed property
                 if any(w in pm.group(1) for w in ("private", "public", "protected")):
                     k.props[pm.group(3)] = pm.group(2)
@@ -160,9 +188,15 @@ def parse_class(code: str) -> Klass:
             part = part.strip()
             if not part:
                 continue
-            if re.match(r"(?:(?:private|public|protected|readonly)\s+)*[\w\\|]+\s+\$", part):
+            # \?? matters: without it every nullable parameter (?int $userId) was invisible, so a
+            # method declared with 6 parameters looked like a 2-parameter one and arity checks were
+            # comparing against the wrong number.
+            if re.match(r"(?:(?:private|public|protected|readonly)\s+)*\??[\w\\|]+\s+\$", part):
                 count += 1
         k.methods[name] = count
+        k.min_args[name] = sum(1 for part in params.split(",")
+                               if part.strip() and "=" not in part
+                               and re.match(r"(?:(?:private|public|protected|readonly)\s+)*\??[\w\\|]+\s+\$", part.strip()))
     for pp in re.finditer(r"private\s+(?:readonly\s+)?([\w\\]+)\s+\$(\w+)\s*;", code):
         k.props[pp.group(2)] = pp.group(1)
     return k
@@ -179,6 +213,54 @@ def arity_of(raw_args: str) -> int:
         elif c == "," and depth == 0:
             count += 1
     return count
+
+
+def balanced_args(code: str, open_index: int) -> str:
+    """Argument list of the call whose "(" sits at open_index, honouring nested parentheses.
+
+    The naive `\(([^)]*)\)` this replaces stopped at the first ")", so `new C($a, $b->f())`
+    was read as a 2-argument call — arity checks passed by luck, not by agreement.
+    """
+    depth = 0
+    for i in range(open_index, len(code)):
+        if code[i] in "([{":
+            depth += 1
+        elif code[i] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return code[open_index + 1:i]
+    return code[open_index + 1:]
+
+
+def php_method(src: str, name: str) -> str:
+    """Body of one PHP method, brace-matched. Empty string when the method does not exist."""
+    m = re.search(r"function\s+" + re.escape(name) + r"\s*\([^)]*\)[^{]*\{", src)
+    if not m:
+        return ""
+    depth, i = 0, m.end() - 1
+    while i < len(src):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[m.end():i]
+        i += 1
+    return ""
+
+
+def ddl_columns(statement: str) -> list:
+    """Column names of a CREATE TABLE statement, in declaration order."""
+    cols = []
+    for line in statement.splitlines()[1:]:
+        m = re.match(r'^\s*[`"](\w+)[`"]\s', line)
+        if m:
+            cols.append(m.group(1))
+    return cols
+
+
+def squash(text: str) -> str:
+    return re.sub(r"\s+", " ", text)
 
 
 # --------------------------------------------------------------------------- checks
@@ -246,27 +328,29 @@ def main() -> int:
         for m in re.finditer(r"new\s+(DateTimeImmutable|DateTimeZone|PDOException)\s*\(", code):
             pass  # builtins vary, skip
         for cls in classes:
-            for m in re.finditer(r"new\s+" + cls + r"\s*\(([^)]*)\)", code):
-                want = len(classes[cls].ctor_args)
-                got = arity_of(m.group(1))
-                if want and got != want:
+            for m in re.finditer(r"new\s+" + cls + r"\s*\(", code):
+                want, need = len(classes[cls].ctor_args), classes[cls].ctor_required
+                got = arity_of(balanced_args(code, m.end() - 1))
+                if want and not need <= got <= want:
                     check(f"{path.name}: new {cls}(...) arity", False,
-                          f"expected {want} args, got {got}")
+                          f"expected {need}..{want} args, got {got}")
         # method calls on typed properties
         for prop, typ in classes.get(_class_name(path), Klass("?")).props.items():
             if typ not in classes:
                 continue
-            for cm in re.finditer(r"\$this->" + prop + r"->(\w+)\s*\(([^)]*)\)", code):
-                meth, args = cm.group(1), cm.group(2)
+            for cm in re.finditer(r"\$this->" + prop + r"->(\w+)\s*\(", code):
+                meth = cm.group(1)
+                args = balanced_args(code, cm.end() - 1)
                 if meth not in classes[typ].methods and meth != "__construct":
                     check(f"{path.name}: $this->{prop}->{meth}() exists",
                           False, f"no such method on {typ}")
                 elif meth in classes[typ].methods:
                     want = classes[typ].methods[meth]
+                    need = classes[typ].min_args.get(meth, want)
                     got = arity_of(args)
-                    if got > want:
+                    if not need <= got <= want:
                         check(f"{path.name}: $this->{prop}->{meth}() arity", False,
-                              f"expected ≤{want}, got {got}")
+                              f"expected {need}..{want}, got {got}")
 
     # -- 4: SQL columns vs schema --------------------------------------------------------
     schema = json.loads((ROOT / "db" / "schema.json").read_text(encoding="utf-8"))
@@ -278,7 +362,9 @@ def main() -> int:
             table, cols_raw = m.group(1), m.group(2)
             if table not in tables:
                 continue
-            cols = [c.strip(" `\"") for c in cols_raw.split(",")]
+            # \t\n\r must be stripped too: a legal INSERT whose column list wraps onto a second
+            # line produced a "column" named '\n        xp' and failed against the schema.
+            cols = [c.strip(" \t\n\r`\"") for c in cols_raw.split(",")]
             unknown = [c for c in cols if c and c not in tables[table]["columns"]]
             check(f"{path.name}: INSERT into {table} columns exist", not unknown, str(unknown))
         all_columns = {c for t in tables.values() for c in t["columns"]}
@@ -326,6 +412,378 @@ def main() -> int:
              "top-all-week", "top-all-month"}
     used = set(re.findall(r"'(top[\w-]*)'", bridge))
     check("ca-compat.js uses only documented types", used <= VALID, str(used - VALID))
+
+
+    # -- 8: licensing --------------------------------------------------------------------
+    licensing = sorted((SRC / "Licensing").glob("*.php"))
+    policy_path = ROOT / "db" / "license_rules.json"
+    if not licensing or not policy_path.is_file():
+        check("licensing layer present", False, "db/license_rules.json / src/Licensing/ missing")
+    else:
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        sources = {f: f.read_text(encoding="utf-8") for f in licensing}
+        code_only = {f: strip_php(raw, keep_strings=True)[0] for f, raw in sources.items()}
+        all_src = "\n".join(sources.values())
+
+        # 8a · the policy file is the only place a licence type is named
+        for name in policy["types"]:
+            hits = [f.name for f in licensing
+                    if f"'{name}'" in code_only[f] or f'"{name}"' in code_only[f]]
+            check(f"licence type '{name}' is not hardcoded in src/Licensing/", hits == [], str(hits))
+
+        # 8b · one finding vocabulary on both sides
+        php_policy = (SRC / "Licensing" / "LicensePolicy.php").read_text(encoding="utf-8")
+        block = re.search(r"const\s+CODES\s*=\s*\[(.*?)\];", php_policy, re.S)
+        # Named finding_codes, not codes: `codes` is the path->stripped-source mapping built at the
+        # top of main(), and rebinding it here silently turned a later `codes[path]` into a list
+        # index. Section 11 hit exactly that.
+        finding_codes = re.findall(r"'([a-z0-9_]+)'", block.group(1)) if block else []
+        labels = set(policy.get("finding_labels", {}))
+        check("LicensePolicy::CODES parsed", bool(finding_codes), "const CODES not found")
+        check("every CODES entry is labelled in the policy", set(finding_codes) <= labels,
+              str(sorted(set(finding_codes) - labels)))
+        check("every policy label is used by LicensePolicy", labels <= set(finding_codes),
+              str(sorted(labels - set(finding_codes))))
+        unreachable = [c for c in finding_codes
+                       if f"'{c}'" not in all_src
+                       and not (c.startswith(("missing_", "bad_"))
+                                and "'" + c.split("_")[0] + "_' ." in all_src)]
+        check("every finding code is actually emitted", unreachable == [], str(unreachable))
+
+        # 8c · the SQL the auditor runs is the SQL the runtime proof exercises
+        auditor = (SRC / "Licensing" / "LicenseAuditor.php").read_text(encoding="utf-8")
+        for frag in ["FROM game_licenses WHERE game_id = ? ORDER BY id ASC",
+                     "LEFT JOIN game_licenses gl ON gl.game_id = g.id",
+                     "AND NOT EXISTS (SELECT 1 FROM game_licenses gl WHERE gl.game_id = g.id"
+                     " AND gl.status = ?)",
+                     "INSERT INTO license_audits (game_id, license_id, verdict, mode, rules_version,"
+                     " reasons, details, audited_at)"]:
+            check(f"licence proof sync: '{frag.strip()[:52]}...' in both",
+                  squash(frag) in squash(auditor) and squash(frag) in squash(prove))
+
+        # 8d · a migration that creates a table must create it exactly as the baseline does
+        for v in versions:
+            for dialect in ("mysql", "sqlite"):
+                for stmt in mig[str(v)][dialect]:
+                    m = re.search(r"CREATE TABLE IF NOT EXISTS [`\"](\w+)[`\"]", stmt)
+                    if not m:
+                        continue
+                    table = m.group(1)
+                    want = list(tables[table]["columns"]) if table in tables else []
+                    got = ddl_columns(stmt)
+                    check(f"migration {v} ({dialect}) {table} columns match the baseline",
+                          got == want, f"got {got}")
+
+        # 8e · the rules version stamped by the newest migration is the version the policy declares
+        newest = mig.get(str(max(versions)), {}) if versions else {}
+        stamped = re.findall(r"""license\.rules_version['`"]?,\s*'int',\s*'(\d+)'""",
+                             "\n".join(newest.get("mysql", []) + newest.get("sqlite", [])))
+        check("migration stamps the current rules version",
+              bool(stamped) and all(int(s) == int(policy.get("version", -1)) for s in stamped),
+              f"stamped={stamped} policy v{policy.get('version')}")
+
+        # 8f · the write endpoints really do pass the gate
+        site_src = (SRC / "Front" / "SiteController.php").read_text(encoding="utf-8")
+        check("submitScore() passes the licence gate", "$this->gate(" in php_method(site_src, "submitScore"))
+        check("play() passes the licence gate", "$this->gate(" in php_method(site_src, "play"))
+        check("gate() consults LicenseAuditor",
+              "$this->licenses->canServe(" in php_method(site_src, "gate"))
+
+    # -- 9: providers --------------------------------------------------------------------
+    guard_path = SRC / "Providers" / "UrlGuard.php"
+    if not guard_path.is_file():
+        check("providers layer present", False, "src/Providers/ missing")
+    else:
+        guard_src = guard_path.read_text(encoding="utf-8")
+        converter_src = (SRC / "Providers" / "FeedConverter.php").read_text(encoding="utf-8")
+        pack_src = (SRC / "Providers" / "OssPack.php").read_text(encoding="utf-8")
+
+        def php_list(src: str, name: str) -> list:
+            m = re.search(name + r"\s*=\s*\[(.*?)\];", src, re.S)
+            return re.findall(r"'([^']+)'", m.group(1)) if m else []
+
+        def py_list(src: str, name: str) -> list:
+            m = re.search(r"^" + name + r"\s*=\s*\[(.*?)\]", src, re.S | re.M)
+            return re.findall(r'"([^"]+)"', m.group(1)) if m else []
+
+        # 9a · the reserved ranges the PHP blocks are exactly the ranges the proof attacks
+        for name in ("BLOCKED_V4", "BLOCKED_V6", "BLOCKED_HOSTS", "BLOCKED_SUFFIXES"):
+            php_ranges, py_ranges = php_list(guard_src, name), py_list(prove, name)
+            check(f"{name} is identical in UrlGuard and the proof", php_ranges == py_ranges,
+                  f"php={php_ranges} proof={py_ranges}")
+            if name.startswith("BLOCKED_V"):
+                check(f"{name} is not empty", len(php_ranges) > 0)
+        check("169.254.0.0/16 (cloud metadata) is blocked", "169.254.0.0/16" in php_list(guard_src, "BLOCKED_V4"))
+        check("127.0.0.0/8 (loopback) is blocked", "127.0.0.0/8" in php_list(guard_src, "BLOCKED_V4"))
+
+        # 9b · the required-field lists match their mirrors
+        for php_name, py_name, src in [
+            ("REQUIRED", "PACK_REQUIRED", pack_src),
+            ("REQUIRED_ITEM", "FEED_REQUIRED_ITEM", converter_src),
+        ]:
+            php_fields, py_fields = php_list(src, php_name), py_list(prove, py_name)
+            check(f"{php_name} matches the proof", php_fields == py_fields,
+                  f"php={php_fields} proof={py_fields}")
+
+        # 9c · the feed SQL the proof runs is the SQL FeedConverter runs
+        for frag in ["SELECT id FROM provider_games WHERE provider = ? AND external_id = ?",
+                     "INSERT INTO provider_games (provider, external_id, payload, fetched_at)",
+                     "UPDATE provider_games SET payload = ?, fetched_at = ? WHERE id = ?",
+                     "INSERT INTO provider_runs (provider, status, rows_seen, rows_new, rows_rejected,"
+                     " started_at)",
+                     "UPDATE provider_runs SET status = ?, rows_seen = ?, rows_new = ?, rows_rejected"
+                     " = ?, detail = ?, finished_at = ? WHERE id = ?"]:
+            check(f"provider proof sync: '{frag.strip()[:48]}...'",
+                  squash(frag) in squash(converter_src) and squash(frag) in squash(prove))
+
+        # 9d · every refusal the proof exercises is actually implemented in the PHP. Without this
+        # the range-list parity above only proves the two LISTS agree; deleting the userinfo branch
+        # from UrlGuard would leave the list intact and open a real hole.
+        hostile = re.search(r"HOSTILE_URLS\s*=\s*\[(.*?)\n\]", prove, re.S)
+        expected_reasons = re.findall(r'\("([^"]+)",\s*"([a-z_]+)"\)', hostile.group(1)) if hostile else []
+        reasons = sorted({r for _, r in expected_reasons if r})
+        check("the proof declares a hostile-URL table", bool(reasons))
+        missing = [r for r in reasons if f"'{r}'" not in guard_src]
+        check("every refusal reason the proof attacks exists in UrlGuard.php", missing == [], str(missing))
+        check("the proof attacks more than a token number of URLs", len(expected_reasons) >= 20,
+              f"{len(expected_reasons)} cases")
+
+        # 9e · a feed cannot be ingested past the guard, and the pack cannot be judged past the policy
+        check("FeedConverter::ingest consults UrlGuard",
+              "$this->guard->inspect(" in php_method(converter_src, "ingest"))
+        check("FeedConverter::ingest consults LicensePolicy",
+              "$this->policy->decide(" in php_method(converter_src, "ingest"))
+        check("OssPack::verifyEntry consults LicensePolicy in export mode",
+              "LicensePolicy::MODE_EXPORT" in php_method(pack_src, "verifyEntry"))
+
+        # 9f · the shipped pack parses and its slugs are unique
+        pack_file = ROOT / "db" / "oss_pack.json"
+        pack_doc = json.loads(pack_file.read_text(encoding="utf-8")) if pack_file.is_file() else {}
+        slugs = [e.get("slug") for e in pack_doc.get("entries", [])]
+        check("db/oss_pack.json has entries with unique slugs",
+              bool(slugs) and len(slugs) == len(set(slugs)), str(slugs))
+        check("every pack entry names an upstream repo",
+              all(str(e.get("upstream_repo") or "").startswith(("http://", "https://"))
+                  for e in pack_doc.get("entries", []) if e.get("upstream_repo")))
+
+
+    # -- 10: install + export --------------------------------------------------------------
+    proof_src = (ROOT / "tools" / "prove_runtime.py").read_text(encoding="utf-8")
+    MIGRATOR_CURRENT = re.search(r"public const CURRENT = (\d+);",
+                                 raws.get(SRC / "Db" / "Migrator.php", ""))
+    MIGRATOR_CURRENT = MIGRATOR_CURRENT.group(1) if MIGRATOR_CURRENT else "?"
+    print("\n  10 · installer and static export")
+    installer = raws.get(SRC / "Install" / "Installer.php", "")
+    exporter = raws.get(SRC / "Export" / "StaticExporter.php", "")
+    admin = raws.get(SRC / "Admin" / "AdminController.php", "")
+    check("src/Install/Installer.php exists", installer != "")
+    check("src/Export/StaticExporter.php exists", exporter != "")
+    check("src/Admin/AdminController.php exists", admin != "")
+
+    # SELECT columns: the same rule the INSERT gate already enforces, extended to reads. A ledger
+    # query naming a column that does not exist only fails in production, at 3am, on a buyer's box.
+    def php_literals(text: str) -> list[str]:
+        found = re.findall(r"'((?:[^'\\]|\\.)*)'", text) + re.findall(r'"((?:[^"\\]|\\.)*)"', text)
+        return [squash(f) for f in found]
+
+    def split_top(part: str) -> list[str]:
+        out, depth, cur = [], 0, ""
+        for c in part:
+            if c in "([":
+                depth += 1
+            elif c in ")]":
+                depth -= 1
+            if c == "," and depth == 0:
+                out.append(cur)
+                cur = ""
+                continue
+            cur += c
+        if cur.strip():
+            out.append(cur)
+        return out
+
+    QUOTE = "[`\"']"          # a column may be quoted with a backtick, a double or a single quote
+    select_bad: list[str] = []
+    select_seen = 0
+    for path in files:
+        for lit in php_literals(raws[path]):
+            m = re.match("SELECT\s+(.+?)\s+FROM\s+" + QUOTE + "?(\w+)" + QUOTE + "?", lit, re.I)
+            if not m:
+                continue
+            table = m.group(2)
+            if table not in tables or re.search(r"\bJOIN\b", lit, re.I):
+                continue
+            for raw_col in split_top(m.group(1)):
+                col = raw_col.strip()
+                if not col or "(" in col or "*" in col or "?" in col:
+                    continue          # expressions and wildcards are not column names
+                col = re.split(r"\s+AS\s+", col, flags=re.I)[0].strip()
+                col = col.split(".")[-1].strip(" `\"")
+                if col.upper() == "DISTINCT" or not re.match(r"^\w+$", col):
+                    continue
+                select_seen += 1
+                if col not in tables[table]["columns"]:
+                    select_bad.append(f"{path.name}: {table}.{col}")
+    check(f"every SELECT column names a real column ({select_seen} read)", not select_bad, str(select_bad))
+
+    # The two installer statements the runtime proof executes verbatim. If either side drifts the
+    # proof would be pinning SQL the product no longer runs.
+    def php_const(text: str, name: str) -> str:
+        m = re.search(r"const\s+" + name + r"\s*=\s*'((?:[^'\\]|\\.)*)'", text, re.S)
+        return squash(m.group(1)) if m else ""
+
+    sql_setting = php_const(installer, "SQL_SETTING")
+    sql_admin = php_const(installer, "SQL_ADMIN")
+    check("Installer::SQL_SETTING is non-empty", sql_setting != "")
+    check("Installer::SQL_ADMIN is non-empty", sql_admin != "")
+    check("the proof runs Installer::SQL_SETTING verbatim",
+          sql_setting in squash(proof_src), "not found in prove_runtime.py")
+    check("the proof runs Installer::SQL_ADMIN verbatim",
+          sql_admin in squash(proof_src), "not found in prove_runtime.py")
+    check("re-seeding must not overwrite an operator's edits (DO NOTHING, not DO UPDATE)",
+          "ON CONFLICT(key_name) DO NOTHING" in sql_setting and "DO UPDATE" not in sql_setting, sql_setting[-60:])
+
+    check("the installer refuses a secret shorter than 32 bytes",
+          "strlen((string) ($config['secret'] ?? '')) < 32" in installer)
+    check("the installer replaces the shipped placeholder secret",
+          "$config['secret'] = $this->randomSecret();" in installer
+          and "random_bytes(32)" in installer)
+    check("the installer will not continue on an unsupported PHP",
+          "version_compare(PHP_VERSION, self::MIN_PHP, '<')" in installer)
+    check("the installer checks the schema against db/schema.json",
+          "db/schema.json" in installer and "array_diff($expected, $present)" in installer)
+    check("Migrator::CURRENT matches the proof's MIGRATOR_CURRENT",
+          f"MIGRATOR_CURRENT = {MIGRATOR_CURRENT}\n" in proof_src
+          and f"public const CURRENT = {MIGRATOR_CURRENT};" in raws.get(SRC / "Db" / "Migrator.php", ""))
+
+    # The export rule that matters is negative: a refused game must produce no file. Structurally
+    # that means the not-exportable branch contains no write at all.
+    branch = php_method(strip_php(exporter, keep_strings=True)[0], "export")
+    refused_branch = ""
+    bm = re.search(r"if\s*\(\(bool\)\s*\$game\['exportable'\]\s*===\s*false\)\s*\{", branch)
+    if bm:
+        depth, i = 0, bm.end() - 1
+        while i < len(branch):
+            if branch[i] == "{":
+                depth += 1
+            elif branch[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    refused_branch = branch[bm.end():i]
+                    break
+            i += 1
+    check("StaticExporter::export branches on exportable === false", refused_branch != "")
+    check("the refused branch writes nothing",
+          refused_branch != "" and "file_put_contents" not in refused_branch, refused_branch[:80])
+    check("the refused branch records the reason instead",
+          "reasons" in refused_branch and "continue" in refused_branch)
+    # Pinned as the exact comparison, not as "mentions rules_sha256": an `if (false)` in front of
+    # the throw satisfies a keyword check while deleting the guard entirely. The mutation suite
+    # injects exactly that, and the keyword version of this check let it through.
+    check("the exporter verifies the shipped policy is the audited policy",
+          "if (\\hash('sha256', (string) \\json_encode($decoded)) !== (string) $manifest['rules_sha256']) {"
+          in exporter and "refusing to export" in exporter)
+    check("the exporter records the hash of the bytes it ships",
+          "$manifest['rules_file_sha256'] = \hash('sha256', $rulesBytes);" in exporter)
+    check("the exporter writes the attribution into each page",
+          "attribution" in exporter and 'class="attribution"' in exporter)
+    check("the admin panel reads verdicts from the auditor, never re-decides them",
+          "->evaluate(" not in admin and "->decide(" not in admin and "new LicensePolicy" not in admin)
+    check("the admin ledger reads the audit table", "FROM license_audits" in admin)
+
+
+
+    # -- 11: autoload + require resolution -------------------------------------------------
+    # Without a PHP runtime these two failure modes are invisible to every other check, and both
+    # are fatal at the first request: a class that does not sit where PSR-4 will look for it, and
+    # a require path that does not exist. Neither is hypothetical — public/index.php and both bin
+    # scripts were added in the same batch, and a typo in either is a white screen, not a warning.
+    print("\n  11 · autoload and require paths")
+    composer_doc = json.loads((ROOT / "composer.json").read_text(encoding="utf-8"))
+    psr4 = composer_doc.get("autoload", {}).get("psr-4", {})
+    check("composer.json declares one PSR-4 prefix", list(psr4) == ["Nawras\\"], str(list(psr4)))
+    psr4_dir = ROOT / str(psr4.get("Nawras\\" "")).rstrip("/")
+    check("the PSR-4 directory exists", psr4_dir.is_dir(), str(psr4_dir))
+
+    psr4_bad = []
+    for path in files:
+        ns = re.search(r"namespace\s+([\w\\]+);", codes[path])
+        if not ns or not str(ns.group(1)).startswith("Nawras"):
+            continue
+        rel = ns.group(1)[len("Nawras"):].lstrip("\\").replace("\\", "/")
+        for cls in re.findall(r"(?:final\s+)?(?:abstract\s+)?class\s+(\w+)", codes[path]):
+            expected = (psr4_dir / rel / f"{cls}.php").resolve() if rel else (psr4_dir / f"{cls}.php").resolve()
+            if expected != path.resolve():
+                psr4_bad.append(f"{cls} is in {path.relative_to(ROOT)} but PSR-4 looks in "
+                                f"{expected.relative_to(ROOT)}")
+    check("every Nawras class sits where its namespace says", not psr4_bad, str(psr4_bad))
+
+    def resolve_php_path(expr: str, here: Path) -> Path | None:
+        """Evaluates the subset of path expressions this codebase actually uses."""
+        expr = expr.strip()
+
+        # Split on "." only outside quotes: a plain split cut '/autoload.php' at its own dot, so
+        # every require in this codebase became unresolvable and the check reported "0 seen" —
+        # a green line that proved nothing.
+        parts, cur, quote = [], "", None
+        for ch in expr:
+            if quote:
+                cur += ch
+                if ch == quote:
+                    quote = None
+                continue
+            if ch in "'\"":
+                quote = ch
+                cur += ch
+                continue
+            if ch == ".":
+                parts.append(cur)
+                cur = ""
+                continue
+            cur += ch
+        if cur.strip():
+            parts.append(cur)
+        parts = [x.strip() for x in parts]
+
+        out: Path | None = None
+        for part in parts:
+            m = re.fullmatch(r"__DIR__", part)
+            if m:
+                out = here.parent
+                continue
+            m = re.fullmatch(r"\\?dirname\(\s*__DIR__\s*(?:,\s*(\d+)\s*)?\)", part)
+            if m:
+                # __DIR__ is the file's own directory, so dirname(__DIR__) is one level ABOVE it:
+                # dirname(__DIR__, N) climbs N levels from here.parent. Getting this off by one
+                # reported three healthy requires as missing.
+                levels = int(m.group(1) or 1)
+                out = here.parent
+                for _ in range(levels):
+                    out = out.parent
+                continue
+            m = re.fullmatch(r"'([^']*)'", part) or re.fullmatch(r'"([^"]*)"', part)
+            if m and out is not None:
+                out = (out / m.group(1).lstrip("/")) if m.group(1).startswith("/") else out / m.group(1)
+                continue
+            return None          # a variable or constant we cannot resolve: skip, do not guess
+        return out
+
+    require_missing, require_seen = [], 0
+    for path in list(files) + [ROOT / "public" / "index.php"]:
+        if not path.is_file():
+            continue
+        raw_here = path.read_text(encoding="utf-8")
+        for m in re.finditer(r"\brequire(?:_once)?\s+([^;]+);", raw_here):
+            target = resolve_php_path(m.group(1), path)
+            if target is None:
+                continue
+            require_seen += 1
+            if not target.is_file():
+                require_missing.append(f"{path.relative_to(ROOT)} -> {target}")
+    check(f"every resolvable require points at a real file ({require_seen} seen)",
+          not require_missing, str(require_missing))
+    check("the front controller and both bin scripts exist",
+          all((ROOT / f).is_file() for f in ("public/index.php", "bin/install.php", "bin/export.php")))
 
     print()
     if FAILURES:

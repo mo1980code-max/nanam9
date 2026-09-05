@@ -1,0 +1,45 @@
+{
+    "name": "nawras/arcade",
+    "description": "Bilingual RTL-first arcade engine: one codebase, PHP 8.3 dynamic + static export, licence ledger with an audit trail, bucketed leaderboard (8 CloudArcade-compatible period types), SSRF-hardened providers and schema migrations.",
+    "type": "project",
+    "license": "proprietary",
+    "keywords": ["arcade", "html5", "rtl", "arabic", "leaderboard", "licence"],
+    "require": {
+        "php": ">=8.1",
+        "ext-pdo": "*",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "ext-hash": "*"
+    },
+    "suggest": {
+        "ext-pdo_mysql": "Production installs run on MySQL; pdo_sqlite is enough for the zero-config quick start.",
+        "ext-pdo_sqlite": "Needed for the sqlite driver and for the installer's self-check on shared hosts.",
+        "ext-intl": "Only if you add locale-aware sorting to the leaderboard."
+    },
+    "autoload": {
+        "psr-4": {
+            "Nawras\\": "src/"
+        }
+    },
+    "scripts": {
+        "gates": [
+            "python3 tools/verify_php.py",
+            "python3 tools/prove_runtime.py",
+            "python3 tools/gen_schema_sql.py --verify",
+            "python3 tools/gen_license_rules.py --verify"
+        ],
+        "install-site": "php bin/install.php",
+        "export-static": "php bin/export.php"
+    },
+    "scripts-descriptions": {
+        "gates": "Runs every structural + executable gate. The Python tools are the reviewer because a PHP runtime is not guaranteed on the machine doing the review.",
+        "install-site": "Writes config, migrates the schema and seeds the admin account.",
+        "export-static": "Writes the static bundle for games the licence auditor cleared for redistribution."
+    },
+    "config": {
+        "sort-packages": true,
+        "optimize-autoloader": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

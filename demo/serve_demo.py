@@ -15,6 +15,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,11 +24,14 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
-from prove_runtime import Board, bucket_key  # noqa: E402  (same SQL as Gamify\Leaderboard)
+from prove_runtime import (  # noqa: E402  (same SQL as the real PHP classes)
+    HOSTILE_URLS, MIGRATOR_CURRENT, Auditor, Board, Exporter, Feed, Install, Pack, Policy,
+    bucket_key, guard_inspect,
+)
 
 PORT = int(__import__("os").environ.get("PORT", "8090"))
 NOW = "2026-09-05 12:00:00"
-DOCS = ["LEADERBOARD", "UPGRADING", "CA-COMPAT", "README"]
+DOCS = ["LEADERBOARD", "UPGRADING", "CA-COMPAT", "LICENSING", "PROVIDERS", "INSTALLING", "README"]
 
 GAMES = [
     (1, "neon-worm", "نيون وورم", "casual"),
@@ -49,6 +53,26 @@ SEED = [
     (4, 990, "عمر", "2026-08-18 12:00:00"), (4, 2400, "لينا", "2026-07-20 09:30:00"),
 ]
 
+# (game_id, licence row) — two games are deliberately NOT servable: bubble-nova has no licence
+# row at all, maze-runner carries a licence type this engine refuses outright.
+SHA40 = "9f2c1ab7d4e80563f21b0c9a7e6d5c4b3a291807"
+SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+LICENSES = [
+    (1, {"license_type": "own", "license_ref": "in-house", "provider": "own",
+         "captured_at": NOW[:10]}),
+    (2, {"license_type": "cc-by", "license_ref": "CC BY 4.0", "provider": "oss",
+         "license_file": "LICENSE.md", "license_sha256": SHA256,
+         "proof_url": "https://example.org/echo-cards", "attribution_required": 1,
+         "attribution_html": 'لعبة «إيكو كاردز» من <a href="https://example.org/echo-cards">'
+                             'example.org</a> برخصة CC BY 4.0',
+         "captured_at": NOW[:10]}),
+    (4, {"license_type": "agpl-3.0", "license_ref": "AGPL-3.0", "provider": "oss",
+         "upstream_repo": "https://git.example/maze", "commit_sha": SHA40,
+         "license_file": "LICENSE", "license_sha256": SHA256,
+         "proof_url": "https://git.example/maze/LICENSE", "attribution_required": 1,
+         "attribution_html": "Maze Runner © its authors, AGPL-3.0", "captured_at": NOW[:10]}),
+]
+
 TYPES = {
     "top": ("all", True), "top-day": ("day", True), "top-week": ("week", True),
     "top-month": ("month", True), "top-all": ("all", False), "top-all-day": ("day", False),
@@ -64,8 +88,8 @@ def build_db() -> sqlite3.Connection:
     conn.executescript((ROOT / "db" / "schema.sqlite.sql").read_text(encoding="utf-8"))
     for gid, slug, title, cat in GAMES:
         conn.execute(
-            "INSERT INTO games (id, slug, title_ar, title_en, category_id, created_at, updated_at) "
-            "VALUES (?,?,?,?,NULL,'2026-08-01 00:00:00','2026-08-01 00:00:00')",
+            "INSERT INTO games (id, slug, title_ar, title_en, category_id, status, created_at, updated_at) "
+            "VALUES (?,?,?,?,NULL,'published','2026-08-01 00:00:00','2026-08-01 00:00:00')",
             (gid, slug, title, slug))
         conn.execute(
             "INSERT INTO categories (id, slug, name_ar, name_en, created_at) "
@@ -74,6 +98,15 @@ def build_db() -> sqlite3.Connection:
     board = Board(conn)
     for gid, score, alias, at in SEED:
         board.submit(gid, score, alias, at)
+    # What Migrator leaves behind after a successful run; the installer's self-check reads it.
+    conn.execute("INSERT INTO schema_version (version, applied_at) VALUES (?, ?)", (MIGRATOR_CURRENT, NOW))
+    for gid, lic in LICENSES:
+        cols = ", ".join(lic)
+        marks = ", ".join("?" for _ in lic)
+        conn.execute(
+            f"INSERT INTO game_licenses (game_id, {cols}, created_at, updated_at) "
+            f"VALUES (?, {marks}, ?, ?)",
+            (gid, *lic.values(), NOW, NOW))
     return conn
 
 
@@ -143,31 +176,31 @@ DB_LOCK = threading.Lock()
 
 
 def ensure_zip() -> Path:
-    """The download bundle: arcade/ alone at the zip root, rebuilt from HEAD if missing."""
-    zp = ROOT.parent.parent / "nawras-arcade.zip"  # outside the repo, downloads dir of the sandbox
+    """The download bundle: this checkout at the zip root, rebuilt from HEAD if missing."""
+    zp = Path(tempfile.gettempdir()) / "nawras-arcade.zip"  # outside the repo on purpose
     if zp.is_file() and zp.stat().st_size > 1000:
         return zp
     import subprocess as sp
     import tarfile
-    import tempfile
     import zipfile as zf
     with tempfile.TemporaryDirectory() as td:
         tar_p = Path(td) / "pkg.tar"
         with open(tar_p, "wb") as fh:
-            sp.run(["git", "archive", "--format=tar", "HEAD", "arcade"],
-                   cwd=str(ROOT.parent), stdout=fh, check=True)
+            # the repo root itself — the old code hardcoded a directory named "arcade", which is
+            # not what this checkout is called, so /download returned 500 for anyone who clicked it
+            sp.run(["git", "archive", "--format=tar", "HEAD"], cwd=str(ROOT), stdout=fh, check=True)
         with tarfile.open(tar_p) as tf:
             tf.extractall(td)
-        src = Path(td) / "arcade"
         with zf.ZipFile(zp, "w", zf.ZIP_DEFLATED) as z:
-            for f in sorted(src.rglob("*")):
-                if f.is_file():
-                    z.write(f, f.relative_to(src))
+            for f in sorted(Path(td).rglob("*")):
+                if f.is_file() and f != tar_p:
+                    z.write(f, f.relative_to(td))
     return zp
 
 
 class Handler(BaseHTTPRequestHandler):
     conn: sqlite3.Connection = None  # type: ignore[assignment]
+    auditor: "Auditor" = None  # type: ignore[assignment]
     gates: str = ""
 
     def log_message(self, *a):  # quieter logs
@@ -180,7 +213,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        self.wfile.write(body)
+        self._write(body)
 
     def _html(self, html, status=200):
         body = html.encode()
@@ -188,7 +221,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        self._write(body)
+
+    def do_HEAD(self):  # proxies and preview panels probe with HEAD; 501 here looked like a dead server
+        self._head_only = True
+        try:
+            self.do_GET()
+        finally:
+            self._head_only = False
+
+    def _write(self, body: bytes):
+        if not getattr(self, "_head_only", False):
+            self.wfile.write(body)
 
     def do_GET(self):
         u = urlparse(self.path)
@@ -212,6 +256,15 @@ class Handler(BaseHTTPRequestHandler):
             if per_game and game is None:
                 self._json({"ok": False, "error": "this type needs ?game=slug"}, 422)
                 return
+            if game is not None:
+                with DB_LOCK:
+                    verdict = self.auditor.can_serve(game[0])
+                if not verdict["ok"]:
+                    self._json({
+                        "ok": False, "error": "بوابة الترخيص: هذه اللعبة غير مرخّصة للعرض",
+                        "verdict": verdict["verdict"], "reasons": verdict["reasons"],
+                    }, 451)
+                    return
             with DB_LOCK:
                 board = Board(self.conn)
                 rows = board.for_type(game[0] if game else None, type_, amount)
@@ -226,6 +279,139 @@ class Handler(BaseHTTPRequestHandler):
                     for n, r in enumerate(rows, 1)
                 ],
             })
+            return
+
+        if u.path == "/api/license":
+            slug = (q.get("game") or [""])[0].strip()
+            with DB_LOCK:
+                game = self.conn.execute(
+                    "SELECT id, slug, provider FROM games WHERE slug = ?", (slug,)).fetchone()
+                if game is None:
+                    self._json({"ok": False, "error": f"game '{slug}' not found"}, 404)
+                    return
+                v = self.auditor.audit(game[0], "dynamic", {"game_provider": game[2]})
+                rows = self.auditor.licenses_for(game[0])
+            self._json({
+                "ok": True, "game": game[1], "servable": v["ok"], "verdict": v["verdict"],
+                "attribution": v["attribution"], "reasons": v["reasons"], "warnings": v["warnings"],
+                "licenses": [{k: r.get(k) for k in
+                              ("provider", "license_type", "license_ref", "upstream_repo",
+                               "commit_sha", "proof_url", "attribution_html", "captured_at",
+                               "expires_at", "status")} for r in rows],
+            }, 200 if v["ok"] else 451)
+            return
+
+        if u.path == "/api/audit":
+            with DB_LOCK:
+                report = self.auditor.audit_published("dynamic", {"commercial_install": True})
+                ledger = self.conn.execute(
+                    "SELECT COUNT(*), MAX(rules_version) FROM license_audits").fetchone()
+                unlicensed = self.auditor.unlicensed()
+            self._json({
+                "ok": True, "audited": report["audited"], "ok_count": report["ok"],
+                "warn": report["warn"], "blocked": report["blocked"],
+                "ledger_rows": ledger[0], "rules_version": ledger[1],
+                "unlicensed": unlicensed,
+                "rows": [{"game": r["game_slug"], "verdict": r["verdict"],
+                          "license_type": r["license_type"], "reasons": r["reasons"],
+                          "warnings": r["warnings"]} for r in report["rows"]],
+            })
+            return
+
+        if u.path == "/api/export":
+            # Runs the same exporter mirror the runtime proof runs, against this demo's catalogue.
+            dist = tempfile.mkdtemp(prefix="demo-dist-")
+            try:
+                with DB_LOCK:
+                    report = Exporter(self.auditor, dist, str(ROOT / "db" / "license_rules.json")).export()
+                on_disk = sorted(str(f.relative_to(dist)) for f in Path(dist).rglob("*") if f.is_file())
+                pages = {f.parent.name: (dist / f).read_text(encoding="utf-8")
+                         for f in Path(dist, "game").glob("*/index.html")} if Path(dist, "game").is_dir() else {}
+                refused_slugs = [r["slug"] for r in report["refusals"]]
+                self._json({
+                    "ok": report["ok"], "exported": report["exported"], "blocked": report["blocked"],
+                    "bytes": report["bytes"], "rules_version": report["rules_version"],
+                    "rules_file_sha256": report["rules_file_sha256"],
+                    "note": "a refused game produces no file — that is the whole point of the exporter",
+                    "files_on_disk": on_disk,
+                    "refused_produced_no_directory": refused_slugs,
+                    "refusals": report["refusals"],
+                    "sample_page": (sorted(pages.values())[0] if pages else None),
+                })
+            finally:
+                import shutil
+                shutil.rmtree(dist, ignore_errors=True)
+            return
+
+        if u.path == "/api/install":
+            # Runs the installer mirror's steps against a throwaway root and this demo's database.
+            root = tempfile.mkdtemp(prefix="demo-install-")
+            try:
+                Path(root, "config").mkdir()
+                Path(root, "db").mkdir()
+                import shutil
+                shutil.copy(ROOT / "config" / "config.sample.php", Path(root, "config", "config.sample.php"))
+                shutil.copy(ROOT / "db" / "schema.json", Path(root, "db", "schema.json"))
+                installer = Install(conn=self.conn, root=root)
+                steps = [{"name": "environment", "detail": installer.check_environment(), "ok": True}]
+                steps.append({"name": "config", "detail": installer.write_config(), "ok": True})
+                secret = installer.load_config()
+                steps.append({"name": "secret", "ok": True,
+                              "detail": f"{len(secret)} hex chars · not the shipped placeholder"})
+                with DB_LOCK:
+                    steps.append({"name": "seed", "detail": installer.seed(), "ok": True})
+                    steps.append({"name": "self_check", "detail": installer.self_check(), "ok": True})
+                bad = Install(conn=self.conn, root=root, php_version="8.0.30")
+                try:
+                    bad.check_environment()
+                    refused = "NOT refused"
+                except RuntimeError as exc:
+                    refused = str(exc)
+                self._json({"ok": True, "steps": steps,
+                            "unsupported_php_is_refused": refused,
+                            "note": "each step is reported; the run stops at the first failure"})
+            finally:
+                import shutil
+                shutil.rmtree(root, ignore_errors=True)
+            return
+
+        if u.path == "/api/pack":
+            policy = Policy(json.loads((ROOT / "db" / "license_rules.json").read_text(encoding="utf-8")))
+            pack = Pack(json.loads((ROOT / "db" / "oss_pack.json").read_text(encoding="utf-8")), policy)
+            report = pack.verify_all()
+            self._json({"ok": True, **report})
+            return
+
+        if u.path == "/api/guard":
+            urls = HOSTILE_URLS + [("https://games.example.org/feed.json", "")]
+            self._json({"ok": True, "results": [
+                {"url": u, "refused": guard_inspect(u)["reason"] or "—"} for u, _ in urls]})
+            return
+
+        if u.path == "/api/feed":
+            items = [
+                {"external_id": "gd-1", "title_en": "Neon Racer", "license_type": "mit",
+                 "license_ref": "MIT", "commit_sha": "9" * 40, "license_file": "LICENSE",
+                 "license_sha256": "a" * 64, "proof_url": "https://git.example/gd-1",
+                 "captured_at": NOW[:10], "attribution_required": 1,
+                 "attribution_html": "Neon Racer © its authors, MIT"},
+                {"external_id": "gd-2", "title_en": "Ghost Maze", "license_type": "cc-by",
+                 "license_ref": "CC BY 4.0", "proof_url": "https://git.example/gd-2"},
+                {"external_id": "gd-3", "title_en": "Mystery", "license_type": "beerware"},
+            ]
+            with DB_LOCK:
+                feed = Feed(self.conn, Policy(json.loads(
+                    (ROOT / "db" / "license_rules.json").read_text(encoding="utf-8"))))
+                good = feed.ingest("gamedistribution", "https://api.example.org/feed.json", items,
+                                   resolver=lambda h: ["93.184.216.34"])
+                bad = feed.ingest("gamedistribution",
+                                  "http://169.254.169.254/latest/meta-data/iam/", items)
+                runs = self.conn.execute(
+                    "SELECT provider, status, rows_seen, rows_new, rows_rejected FROM provider_runs ORDER BY id DESC LIMIT 5"
+                ).fetchall()
+            self._json({"ok": True, "clean_feed": good, "hostile_feed": bad,
+                        "recent_runs": [dict(zip(("provider", "status", "seen", "new", "rejected"), r))
+                                        for r in runs]})
             return
 
         if u.path == "/api/gates":
@@ -244,7 +430,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Content-Disposition", "attachment; filename=\"nawras-arcade.zip\"")
             self.end_headers()
-            self.wfile.write(body)
+            self._write(body)
             return
 
         if u.path == "/" or u.path == "/demo":
@@ -279,6 +465,9 @@ WRAP = """<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
 def main() -> int:
     global GATES_OUT
     Handler.conn = build_db()
+    policy = Policy(json.loads((ROOT / "db" / "license_rules.json").read_text(encoding="utf-8")))
+    Handler.auditor = Auditor(Handler.conn, policy)
+    Handler.auditor.audit_published("dynamic", {"commercial_install": True})
     try:
         GATES_OUT = subprocess.run(
             ["npm", "test"], cwd=str(ROOT), capture_output=True, text=True, timeout=120

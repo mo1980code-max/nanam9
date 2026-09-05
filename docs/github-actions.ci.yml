@@ -1,0 +1,70 @@
+# GitHub Actions workflow — NOT active from this path.
+#
+# Move it into place to turn it on:
+#     mkdir -p .github/workflows && cp docs/github-actions.ci.yml .github/workflows/ci.yml
+#
+# It ships here because the automation account that pushes this repository has no
+# `workflows` permission, and GitHub rejects any push that creates or updates a file under
+# .github/workflows/ from such an account ("refusing to allow a GitHub App to create or
+# update workflow"). Nothing about the workflow itself is unverified except that it has
+# never run: the YAML parses, and every command in the `gates` job is the same command
+# `npm test` runs and prints green locally.
+#
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  gates:
+    name: structural + runtime gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The gates are Python on purpose: they review the PHP layer without needing a PHP runtime,
+      # so a reviewer on any machine gets the same answer a buyer's CI does.
+      - name: structural gate (PHP shape, SQL vs schema, PHP/proof parity)
+        run: python3 tools/verify_php.py
+
+      - name: runtime proof (schema, migrations, 8 boards, licence gate, providers, export, install)
+        run: python3 tools/prove_runtime.py
+
+      - name: both SQL dialects generated from the same schema
+        run: python3 tools/gen_schema_sql.py --verify
+
+      - name: licence policy is one file shared byte-identically
+        run: python3 tools/gen_license_rules.py --verify
+
+  php:
+    name: real PHP runtime
+    runs-on: ubuntu-latest
+    needs: gates
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install php + sqlite
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y php-cli php-sqlite3 php-mbstring
+
+      - name: lint every php file
+        run: |
+          find bin public src -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      - name: install against sqlite
+        run: php bin/install.php --admin-user=ci
+
+      - name: an empty catalogue exports nothing, and says so by exiting 1
+        run: |
+          set +e
+          php bin/export.php dist
+          code=$?
+          set -e
+          test "$code" -eq 1

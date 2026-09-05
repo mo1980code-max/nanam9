@@ -5,8 +5,8 @@
     python3 tools/gen_schema_sql.py --verify   # CI: fail if they are stale
 
 The guarantee this buys: a column cannot exist in one dialect and not the other, because both
-files are emitted from one ordered dict — and the script asserts the emitted column order is
-identical across dialects. Marketplace arcade scripts ship two hand-written dumps; that is how
+files are emitted from one ordered dict — and the script asserts the emitted column order AND the
+emitted pk/unique/index constraint sets are identical across dialects. Marketplace arcade scripts ship two hand-written dumps; that is how
 buyers end up with "works on MySQL, explodes on SQLite".
 """
 from __future__ import annotations
@@ -87,7 +87,14 @@ def emit_table(dialect: str, name: str, spec: dict) -> str:
     lines = []
     pk_single = None
     pk_composite = spec.get("pk") if spec.get("pk") and "," in spec["pk"] else None
-    if not spec.get("no_id") and spec["columns"].get("id", {}).get("type") == "pk":
+    # A named single-column pk ("settings.key_name") is a pk too. This used to be dropped on the
+    # floor for no_id tables, so `settings` shipped with NO primary key in either dialect: any
+    # ON CONFLICT / ON DUPLICATE KEY upsert against it failed (sqlite) or silently inserted a
+    # duplicate row (mysql). tools/prove_runtime.py proof D asserts the constraint rejects a
+    # duplicate on both the fresh-install and the upgraded path.
+    if pk_composite is None and spec.get("pk") and spec["pk"] in spec["columns"]:
+        pk_single = spec["pk"]
+    if pk_single is None and not spec.get("no_id") and spec["columns"].get("id", {}).get("type") == "pk":
         pk_single = "id"
 
     for cname, cspec in spec["columns"].items():
@@ -120,6 +127,18 @@ def emit_table(dialect: str, name: str, spec: dict) -> str:
         if spec.get("fulltext"):
             cols = ", ".join(q(c, dialect) for c in spec["fulltext"])
             lines.append(f"  FULLTEXT KEY {q('ft_' + name, dialect)} ({cols})")
+
+    if dialect == "sqlite":
+        # SQLite needs the table constraint too. It used to be emitted for MySQL only, so on the
+        # zero-config dialect `game_tag` / `collection_game` / `settings` had NO uniqueness at all:
+        # the same tag could be attached to a game twice and a settings key could be stored twice.
+        # A column named `id INTEGER PRIMARY KEY AUTOINCREMENT` already declares itself — adding a
+        # second table-level PRIMARY KEY for it is a hard error, hence the type check.
+        if pk_composite:
+            cols = ", ".join(q(c, dialect) for c in pk_composite.split(","))
+            lines.append(f"  PRIMARY KEY ({cols})")
+        elif pk_single and spec["columns"][pk_single]["type"] != "pk":
+            lines.append(f"  PRIMARY KEY ({q(pk_single, dialect)})")
 
     body = ",\n".join(lines)
     if dialect == "mysql":
@@ -175,6 +194,47 @@ def parse_orders(sql_text: str) -> dict:
     return out
 
 
+def parse_constraints(sql_text: str) -> set:
+    """{('pk'|'unique'|'index', table, (cols...))} from generated DDL.
+
+    Column order is only half the guarantee: a unique key that exists in one dialect and not the
+    other is how an install ends up with duplicate rows nobody can explain. Names are ignored
+    (MySQL backticks them, SQLite does not); FULLTEXT is excluded on purpose — it is MySQL-only by
+    design and the SQLite side searches with LIKE.
+    """
+    found: set = set()
+    table = None
+    for line in sql_text.splitlines():
+        stripped = line.strip()
+        m = re.match(r"CREATE TABLE IF NOT EXISTS [`\"](\w+)[`\"]", stripped)
+        if m:
+            table = m.group(1)
+            continue
+        if stripped.startswith(");") or stripped.startswith(") ENGINE"):
+            table = None
+            continue
+        m = re.match(r"CREATE (UNIQUE )?INDEX IF NOT EXISTS \S+ ON [`\"](\w+)[`\"] \(([^)]*)\)", stripped)
+        if m:
+            cols = tuple(c.strip(' `\"') for c in m.group(3).split(","))
+            found.add(("unique" if m.group(1) else "index", m.group(2), cols))
+            continue
+        if table:
+            m = re.match(r"(?:UNIQUE KEY|KEY) [`\"]?[\w]+[`\"]? \(([^)]*)\)", stripped)
+            if m:
+                cols = tuple(c.strip(' `\"') for c in m.group(1).split(","))
+                found.add(("unique" if stripped.startswith("UNIQUE") else "index", table, cols))
+                continue
+            m = re.match(r"PRIMARY KEY \(([^)]*)\)", stripped)
+            if m:
+                cols = tuple(c.strip(' `\"') for c in m.group(1).split(","))
+                found.add(("pk", table, cols))
+                continue
+            m = re.match(r"[`\"](\w+)[`\"] INTEGER PRIMARY KEY AUTOINCREMENT", stripped)
+            if m:
+                found.add(("pk", table, (m.group(1),)))
+    return found
+
+
 def main() -> int:
     if not SCHEMA.is_file():
         print("db/schema.json missing — run tools/bootstrap_schema.py first")
@@ -190,6 +250,17 @@ def main() -> int:
         print(f"✗ column order differs between dialect files: {', '.join(sorted(diff))}")
         return 1
 
+    constraints = {d: parse_constraints(rendered[d]) for d in OUT}
+    if constraints["mysql"] != constraints["sqlite"]:
+        only_mysql = constraints["mysql"] - constraints["sqlite"]
+        only_sqlite = constraints["sqlite"] - constraints["mysql"]
+        print("✗ the two dialects declare different constraints:")
+        for kind, table, cols in sorted(only_mysql):
+            print(f"   mysql only : {kind} {table}({', '.join(cols)})")
+        for kind, table, cols in sorted(only_sqlite):
+            print(f"   sqlite only: {kind} {table}({', '.join(cols)})")
+        return 1
+
     cols = sum(len(spec["columns"]) for spec in tables.values())
     idx = sum(len(spec.get("indexes", [])) + len(spec.get("uniques", [])) for spec in tables.values())
 
@@ -203,13 +274,15 @@ def main() -> int:
             print(f"✗ generated SQL is stale: {', '.join(stale)}")
             print("  fix: python3 tools/gen_schema_sql.py")
             return 1
-        print(f"✓ both dialects current · {len(tables)} tables · {cols} columns · {idx} indexes/uniques")
+        print(f"✓ both dialects current · {len(tables)} tables · {cols} columns · {idx} indexes/uniques"
+              f" · {len(constraints['mysql'])} constraints identical")
         return 0
 
     for d, path in OUT.items():
         path.write_text(rendered[d], encoding="utf-8")
     print(f"✓ wrote schema.mysql.sql + schema.sqlite.sql · {len(tables)} tables · "
-          f"{cols} columns · {idx} indexes/uniques · identical column order")
+          f"{cols} columns · {idx} indexes/uniques · identical column order and "
+          f"{len(constraints['mysql'])} identical constraints")
     return 0
 
 

@@ -12,6 +12,7 @@ use Nawras\Http\Response;
  *
  * Public API surface (CloudArcade-compatible names on the read side):
  *   GET  /api/leaderboard?game=slug&type=top-week&amount=10   (eight types, see Gamify\Buckets)
+ *   GET  /api/license?game=slug    provenance + attribution owed for one game (Licensing)
  *   POST /api/score        {game, alias?, score, ts, sig}
  *   POST /api/play         {game}
  *   GET  /assets/ca-compat.js   drop-in bridge for games authored against ca_api
@@ -39,9 +40,10 @@ final class Routes
         $router = new self();
         $db = $app->db();
         $board = $app->leaderboard();
-        $site = new SiteController($db, $board, $app->signer());
+        $site = new SiteController($db, $board, $app->signer(), $app->licensing(), $app->isCommercial());
 
         $router->get('/api/leaderboard', fn (): Response => $site->leaderboard());
+        $router->get('/api/license', fn (): Response => $site->license());
         $router->post('/api/score', fn (): Response => $site->submitScore());
         $router->post('/api/play', fn (): Response => $site->play());
 

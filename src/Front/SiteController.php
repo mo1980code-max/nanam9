@@ -11,6 +11,8 @@ use Nawras\Gamify\Buckets;
 use Nawras\Gamify\Leaderboard;
 use Nawras\Gamify\Signer;
 use Nawras\Http\Response;
+use Nawras\Licensing\LicenseAuditor;
+use Nawras\Licensing\LicensePolicy;
 
 /**
  * Public, accountless endpoints. Score integrity model:
@@ -21,6 +23,9 @@ use Nawras\Http\Response;
  *      game|ts|nonce. The score value is client-chosen and rate-limited — the honest
  *      ceiling of every client-side arcade, commercial ones included.
  *   3. Stored rows carry a server-side HMAC over their contents; reads re-verify.
+ *
+ * Every endpoint that touches a game passes the licence gate first: a game with no usable row in
+ * `game_licenses` is refused with 451 (Unavailable For Legal Reasons) instead of being served.
  */
 final class SiteController
 {
@@ -30,6 +35,8 @@ final class SiteController
         private readonly Connection $db,
         private readonly Leaderboard $board,
         private readonly Signer $signer,
+        private readonly LicenseAuditor $licenses,
+        private readonly bool $commercial = true,
     ) {
     }
 
@@ -88,6 +95,9 @@ final class SiteController
         if (!$this->signer->check($gameRef, $ts, $nonce, $sig)) {
             return Response::json(['ok' => false, 'error' => 'bad or stale page token'], 403);
         }
+        if (($refused = $this->gate($game)) !== null) {
+            return $refused;
+        }
 
         $result = $this->board->submit(
             (int) $game['id'],
@@ -112,6 +122,9 @@ final class SiteController
         if ($game === null) {
             return Response::json(['ok' => false, 'error' => 'unknown game'], 404);
         }
+        if (($refused = $this->gate($game)) !== null) {
+            return $refused;
+        }
         $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s');
         $this->db->run('INSERT INTO play_events (game_id, source, played_at) VALUES (?, ?, ?)', [
             (int) $game['id'],
@@ -126,6 +139,77 @@ final class SiteController
         return Response::json(['ok' => true]);
     }
 
+    /**
+     * The licence gate. Returns null when the game may be served; otherwise the refusal response.
+     * 451 on purpose: this is a legal block, not a server fault and not a permission problem.
+     */
+    private function gate(array $game): ?Response
+    {
+        $verdict = $this->licenses->canServe((int) $game['id'], $this->licenseCtx($game));
+        if ((bool) $verdict['ok'] === true) {
+            return null;
+        }
+
+        return Response::json([
+            'ok' => false,
+            'error' => 'this game is not licensed for serving',
+            'game' => (string) ($game['slug'] ?? ''),
+            'reasons' => $verdict['reasons'],
+            'details' => $verdict['details'],
+        ], 451);
+    }
+
+    /** @param array<string, mixed> $game  @return array<string, mixed> */
+    private function licenseCtx(array $game): array
+    {
+        return [
+            'commercial_install' => $this->commercial,
+            'game_provider' => (string) ($game['provider'] ?? ''),
+        ];
+    }
+
+    /**
+     * GET /api/license?game=slug — public provenance for one game.
+     *
+     * Attribution notices are a licence OBLIGATION (cc-by and friends), so they are public by
+     * design. `invoice_ref` and `allow_origins` are not: they are the buyer's commercial paperwork.
+     */
+    public function license(): Response
+    {
+        $game = $this->game(\trim((string) ($_GET['game'] ?? '')));
+        if ($game === null) {
+            return Response::json(['ok' => false, 'error' => 'unknown game'], 404);
+        }
+        $gameId = (int) $game['id'];
+        $verdict = $this->licenses->audit($gameId, LicensePolicy::MODE_DYNAMIC, $this->licenseCtx($game));
+        $rows = [];
+        foreach ($this->licenses->licensesFor($gameId) as $row) {
+            $rows[] = [
+                'provider' => (string) ($row['provider'] ?? ''),
+                'license_type' => (string) ($row['license_type'] ?? ''),
+                'license_ref' => (string) ($row['license_ref'] ?? ''),
+                'upstream_repo' => (string) ($row['upstream_repo'] ?? ''),
+                'commit_sha' => (string) ($row['commit_sha'] ?? ''),
+                'proof_url' => (string) ($row['proof_url'] ?? ''),
+                'attribution_html' => $row['attribution_html'] === null ? null : (string) $row['attribution_html'],
+                'captured_at' => $row['captured_at'] === null ? null : (string) $row['captured_at'],
+                'expires_at' => $row['expires_at'] === null ? null : (string) $row['expires_at'],
+                'status' => (string) ($row['status'] ?? ''),
+            ];
+        }
+
+        return Response::json([
+            'ok' => true,
+            'game' => (string) ($game['slug'] ?? ''),
+            'servable' => (bool) $verdict['ok'],
+            'verdict' => (string) $verdict['verdict'],
+            'attribution' => $verdict['attribution'],
+            'reasons' => $verdict['reasons'],
+            'warnings' => $verdict['warnings'],
+            'licenses' => $rows,
+        ], (bool) $verdict['ok'] === true ? 200 : 451);
+    }
+
     /** @return array<string, mixed>|null */
     private function game(string $ref): ?array
     {
@@ -134,10 +218,10 @@ final class SiteController
             return null;
         }
         if (\ctype_digit($ref)) {
-            return $this->db->one('SELECT id, slug, title_ar, title_en, status FROM games WHERE id = ?', [(int) $ref]);
+            return $this->db->one('SELECT id, slug, title_ar, title_en, status, provider FROM games WHERE id = ?', [(int) $ref]);
         }
 
-        return $this->db->one('SELECT id, slug, title_ar, title_en, status FROM games WHERE slug = ?', [$ref]);
+        return $this->db->one('SELECT id, slug, title_ar, title_en, status, provider FROM games WHERE slug = ?', [$ref]);
     }
 
     /** @return array<string, mixed> */

@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS "settings" (
   "key_name" TEXT NOT NULL,
   "value_type" TEXT NOT NULL DEFAULT 'string',
   "value_text" TEXT NULL,
-  "updated_at" TEXT NOT NULL
+  "updated_at" TEXT NOT NULL,
+  PRIMARY KEY ("key_name")
 );
 
 CREATE TABLE IF NOT EXISTS "users" (
@@ -115,6 +116,8 @@ CREATE TABLE IF NOT EXISTS "game_licenses" (
   "captured_at" TEXT NULL,
   "expires_at" TEXT NULL,
   "status" TEXT NOT NULL DEFAULT 'active',
+  "audited_at" TEXT NULL,
+  "audit_verdict" TEXT NOT NULL DEFAULT '',
   "notes" TEXT NULL,
   "created_at" TEXT NOT NULL,
   "updated_at" TEXT NOT NULL
@@ -123,6 +126,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_game_licenses_game_id_provider_external_id 
 CREATE INDEX IF NOT EXISTS idx_game_licenses_status ON "game_licenses" ("status");
 CREATE INDEX IF NOT EXISTS idx_game_licenses_license_type ON "game_licenses" ("license_type");
 CREATE INDEX IF NOT EXISTS idx_game_licenses_expires_at ON "game_licenses" ("expires_at");
+CREATE INDEX IF NOT EXISTS idx_game_licenses_audit_verdict ON "game_licenses" ("audit_verdict");
+
+CREATE TABLE IF NOT EXISTS "license_audits" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "game_id" INTEGER NOT NULL REFERENCES "games" ("id") ON DELETE CASCADE,
+  "license_id" INTEGER NULL REFERENCES "game_licenses" ("id") ON DELETE SET NULL,
+  "verdict" TEXT NOT NULL,
+  "mode" TEXT NOT NULL DEFAULT 'dynamic',
+  "rules_version" INTEGER NOT NULL DEFAULT 0,
+  "reasons" TEXT NULL,
+  "details" TEXT NULL,
+  "audited_at" TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_license_audits_game_id_audited_at ON "license_audits" ("game_id", "audited_at");
+CREATE INDEX IF NOT EXISTS idx_license_audits_verdict ON "license_audits" ("verdict");
+CREATE INDEX IF NOT EXISTS idx_license_audits_rules_version ON "license_audits" ("rules_version");
 
 CREATE TABLE IF NOT EXISTS "takedowns" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,7 +203,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_tags_slug ON "tags" ("slug");
 
 CREATE TABLE IF NOT EXISTS "game_tag" (
   "game_id" INTEGER NOT NULL REFERENCES "games" ("id") ON DELETE CASCADE,
-  "tag_id" INTEGER NOT NULL REFERENCES "tags" ("id") ON DELETE CASCADE
+  "tag_id" INTEGER NOT NULL REFERENCES "tags" ("id") ON DELETE CASCADE,
+  PRIMARY KEY ("game_id", "tag_id")
 );
 CREATE INDEX IF NOT EXISTS idx_game_tag_tag_id ON "game_tag" ("tag_id");
 
@@ -204,7 +224,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_collections_slug ON "collections" ("slug");
 CREATE TABLE IF NOT EXISTS "collection_game" (
   "collection_id" INTEGER NOT NULL REFERENCES "collections" ("id") ON DELETE CASCADE,
   "game_id" INTEGER NOT NULL REFERENCES "games" ("id") ON DELETE CASCADE,
-  "position" INTEGER NOT NULL DEFAULT 0
+  "position" INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY ("collection_id", "game_id")
 );
 CREATE INDEX IF NOT EXISTS idx_collection_game_game_id ON "collection_game" ("game_id");
 

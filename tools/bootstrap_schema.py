@@ -143,13 +143,36 @@ def tables() -> "OrderedDict[str, dict]":
             "captured_at": C(type="date", null=True),
             "expires_at": C(type="date", null=True),
             "status": C(type="string", size=16, default="active"),
+            "audited_at": C(type="datetime", null=True),
+            "audit_verdict": C(type="string", size=16, default=""),
             "notes": C(type="text", null=True),
             "created_at": C(type="datetime"),
             "updated_at": C(type="datetime"),
         },
         "uniques": [["game_id", "provider", "external_id"]],
-        "indexes": [["status"], ["license_type"], ["expires_at"]],
-        "note": "the product's core table: no game is visible unless a row here says why",
+        "indexes": [["status"], ["license_type"], ["expires_at"], ["audit_verdict"]],
+        "note": "the product's core table: no game is visible unless a row here says why. "
+                "audit_verdict is a CACHE of the last Licensing\\LicenseAuditor run so an admin "
+                "list can filter blocked games with one indexed query; the auditor recomputes it "
+                "from db/license_rules.json every time and never trusts the cached value.",
+    }
+    T["license_audits"] = {
+        "columns": {
+            "id": C(type="pk"),
+            "game_id": C(type="int", fk="games.id"),
+            "license_id": C(type="int", null=True, fk="game_licenses.id"),
+            "verdict": C(type="string", size=16),
+            "mode": C(type="string", size=8, default="dynamic"),
+            "rules_version": C(type="int", default=0),
+            "reasons": C(type="text", null=True),
+            "details": C(type="text", null=True),
+            "audited_at": C(type="datetime"),
+        },
+        "indexes": [["game_id", "audited_at"], ["verdict"], ["rules_version"]],
+        "note": "append-only ledger: every audit decision is kept, because 'we checked on date X "
+                "against rules vN' is the only defensible answer to a takedown notice. license_id "
+                "is nullable + ON DELETE SET NULL so deleting a licence row cannot erase the fact "
+                "that it was audited.",
     }
     T["takedowns"] = {
         "columns": {

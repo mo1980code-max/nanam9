@@ -22,6 +22,10 @@ return [
         // 'password' => '',
     ],
 
+    // Does this install earn money (paid access, ads, sponsorship)? Non-commercial licences
+    // (see db/license_rules.json → commercial_ok=false) are refused while this is true.
+    'commercial' => true,
+
     'site' => [
         'name_ar' => 'أركيد نورس',
         'name_en' => 'Nawras Arcade',

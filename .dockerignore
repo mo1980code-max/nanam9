@@ -1,0 +1,12 @@
+.git
+.gitignore
+node_modules
+vendor
+var
+dist
+__pycache__
+*.pyc
+config/config.php
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
