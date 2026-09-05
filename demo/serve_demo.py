@@ -15,6 +15,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -173,25 +174,24 @@ DB_LOCK = threading.Lock()
 
 def ensure_zip() -> Path:
     """The download bundle: arcade/ alone at the zip root, rebuilt from HEAD if missing."""
-    zp = ROOT.parent.parent / "nawras-arcade.zip"  # outside the repo, downloads dir of the sandbox
+    zp = Path(tempfile.gettempdir()) / "nawras-arcade.zip"  # outside the repo on purpose
     if zp.is_file() and zp.stat().st_size > 1000:
         return zp
     import subprocess as sp
     import tarfile
-    import tempfile
     import zipfile as zf
     with tempfile.TemporaryDirectory() as td:
         tar_p = Path(td) / "pkg.tar"
         with open(tar_p, "wb") as fh:
-            sp.run(["git", "archive", "--format=tar", "HEAD", "arcade"],
-                   cwd=str(ROOT.parent), stdout=fh, check=True)
+            # the repo root itself — the old code hardcoded a directory named "arcade", which is
+            # not what this checkout is called, so /download returned 500 for anyone who clicked it
+            sp.run(["git", "archive", "--format=tar", "HEAD"], cwd=str(ROOT), stdout=fh, check=True)
         with tarfile.open(tar_p) as tf:
             tf.extractall(td)
-        src = Path(td) / "arcade"
         with zf.ZipFile(zp, "w", zf.ZIP_DEFLATED) as z:
-            for f in sorted(src.rglob("*")):
-                if f.is_file():
-                    z.write(f, f.relative_to(src))
+            for f in sorted(Path(td).rglob("*")):
+                if f.is_file() and f != tar_p:
+                    z.write(f, f.relative_to(td))
     return zp
 
 
