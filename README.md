@@ -97,8 +97,10 @@ POST /api/play         {game}                                   # 451 إن لم 
 (قمم الفروع وبصمات تراخيصها تحقق منها ضد GitHub مباشرة في 2026-09-05)، وإضافة المزيد تجري
 ضد التنسيق نفسه. ولا يبقى إلا تشغيل `docker build` وCI مرة على آلة فيها Docker وPHP
 (كُتبا هنا بلا daemon ولا مترجم PHP، فهما مقروءان لا مُختبَران). ملف الـworkflow نسخة موثقة في
-`docs/github-actions.ci.yml`؛ فعّله بنسخه إلى `.github/workflows/ci.yml` إن كان حساب الدفع
-لا يملك صلاحية `workflows` (كان الدفع إلى ذلك المسار يُرفض من حساب الأتمتة).
+`docs/github-actions.ci.yml`؛ فعّله بنسخه إلى `.github/workflows/ci.yml` — حساب الأتمتة المتصل
+لا يملك صلاحية `workflows`، وقد أُعيد التأكد من الرفض بدفعة فعلية في 2026-09-05
+("refusing to allow a GitHub App to create or update workflow"). أعد وصل GitHub بصلاحية
+`workflows` أو انسخ الملف يدوياً.
 
 انظر `docs/LEADERBOARD.md` و`docs/UPGRADING.md` و`docs/CA-COMPAT.md` و`docs/LICENSING.md`
 و`docs/PROVIDERS.md` و`docs/INSTALLING.md`.
