@@ -1,3 +1,15 @@
+# GitHub Actions workflow — NOT active from this path.
+#
+# Move it into place to turn it on:
+#     mkdir -p .github/workflows && cp docs/github-actions.ci.yml .github/workflows/ci.yml
+#
+# It ships here because the automation account that pushes this repository has no
+# `workflows` permission, and GitHub rejects any push that creates or updates a file under
+# .github/workflows/ from such an account ("refusing to allow a GitHub App to create or
+# update workflow"). Nothing about the workflow itself is unverified except that it has
+# never run: the YAML parses, and every command in the `gates` job is the same command
+# `npm test` runs and prints green locally.
+#
 name: ci
 
 on:

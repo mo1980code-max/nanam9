@@ -39,7 +39,8 @@ src/Export/StaticExporter.php        ← لعبة مرفوضة = لا ملف
 src/Admin/AdminController.php        ← لوحة عمليات الترخيص (JSON فقط)
 src/Http/Response.php · src/Front/SiteController.php · src/Routes.php · src/App.php
 public/index.php        ← المتحكم الأمامي، نقطة PHP الوحيدة داخل docroot
-bin/{install,export}.php · Dockerfile · composer.json · .github/workflows/ci.yml
+bin/{install,export}.php · Dockerfile · composer.json
+docs/github-actions.ci.yml ← workflow جاهز، انقله إلى .github/workflows/ci.yml لتفعيله
 public/assets/ca-compat.js   ← جسر ألعاب ca_api (clean-room)
 tools/{gen_schema_sql,gen_license_rules,verify_php,prove_runtime,bootstrap_schema}.py
 docs/{LEADERBOARD,UPGRADING,CA-COMPAT,LICENSING,PROVIDERS,INSTALLING}.md
@@ -92,6 +93,8 @@ POST /api/play         {game}                                   # 451 إن لم 
 
 الباقي بيانات وتشغيل، لا كود: انتقاء الألعاب الحقيقية بأدلتها المثبتة، وتشغيل `docker build`
 وCI مرة على آلة فيها Docker وPHP (كُتبا here بلا daemon ولا مترجم PHP، فهما مقروءان لا مُختبَران).
+ملف الـworkflow يعيش في `docs/github-actions.ci.yml` لأن حساب GitHub المتصل لا يملك صلاحية
+`workflows`، فالدفع إلى `.github/workflows/` يُرفض — انسخه إلى هناك بنفسك لتفعيله.
 
 انظر `docs/LEADERBOARD.md` و`docs/UPGRADING.md` و`docs/CA-COMPAT.md` و`docs/LICENSING.md`
 و`docs/PROVIDERS.md` و`docs/INSTALLING.md`.

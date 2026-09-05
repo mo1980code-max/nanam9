@@ -141,7 +141,25 @@ See `docs/LICENSING.md` for the finding codes and the order they are evaluated i
 
 ---
 
-## 7. Upgrading
+## 7. Continuous integration
+
+`docs/github-actions.ci.yml` is a ready workflow: one job runs the four Python gates, a second
+installs a real PHP runtime and runs `php -l` over every file, `php bin/install.php` against SQLite,
+and `php bin/export.php` on an empty catalogue (which exits 1 by design — that is asserted, not
+tolerated).
+
+It ships outside `.github/workflows/` because the automation account that pushes this repository
+has no `workflows` permission and GitHub rejects such a push outright. To turn it on:
+
+```bash
+mkdir -p .github/workflows && cp docs/github-actions.ci.yml .github/workflows/ci.yml
+```
+
+The YAML parses and every command in the gates job is one `npm test` already runs green locally.
+What has not happened is a run: this environment has no GitHub runner, no Docker daemon and no PHP
+binary.
+
+## 8. Upgrading
 
 `php bin/install.php` is the upgrade path: it applies only the migrations that have not run and
 leaves your settings alone. Read `docs/UPGRADING.md` before a major version — migration 4 rebuilds
