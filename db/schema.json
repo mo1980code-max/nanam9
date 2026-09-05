@@ -443,6 +443,15 @@
      "size": 16,
      "default": "active"
     },
+    "audited_at": {
+     "type": "datetime",
+     "null": true
+    },
+    "audit_verdict": {
+     "type": "string",
+     "size": 16,
+     "default": ""
+    },
     "notes": {
      "type": "text",
      "null": true
@@ -470,9 +479,65 @@
     ],
     [
      "expires_at"
+    ],
+    [
+     "audit_verdict"
     ]
    ],
-   "note": "the product's core table: no game is visible unless a row here says why"
+   "note": "the product's core table: no game is visible unless a row here says why. audit_verdict is a CACHE of the last Licensing\\LicenseAuditor run so an admin list can filter blocked games with one indexed query; the auditor recomputes it from db/license_rules.json every time and never trusts the cached value."
+  },
+  "license_audits": {
+   "columns": {
+    "id": {
+     "type": "pk"
+    },
+    "game_id": {
+     "type": "int",
+     "fk": "games.id"
+    },
+    "license_id": {
+     "type": "int",
+     "null": true,
+     "fk": "game_licenses.id"
+    },
+    "verdict": {
+     "type": "string",
+     "size": 16
+    },
+    "mode": {
+     "type": "string",
+     "size": 8,
+     "default": "dynamic"
+    },
+    "rules_version": {
+     "type": "int",
+     "default": 0
+    },
+    "reasons": {
+     "type": "text",
+     "null": true
+    },
+    "details": {
+     "type": "text",
+     "null": true
+    },
+    "audited_at": {
+     "type": "datetime"
+    }
+   },
+   "indexes": [
+    [
+     "game_id",
+     "audited_at"
+    ],
+    [
+     "verdict"
+    ],
+    [
+     "rules_version"
+    ]
+   ],
+   "note": "append-only ledger: every audit decision is kept, because 'we checked on date X against rules vN' is the only defensible answer to a takedown notice. license_id is nullable + ON DELETE SET NULL so deleting a licence row cannot erase the fact that it was audited."
   },
   "takedowns": {
    "columns": {

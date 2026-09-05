@@ -23,11 +23,13 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
-from prove_runtime import Board, bucket_key  # noqa: E402  (same SQL as Gamify\Leaderboard)
+from prove_runtime import (  # noqa: E402  (same SQL as Gamify\Leaderboard / Licensing\LicenseAuditor)
+    Auditor, Board, Policy, bucket_key,
+)
 
 PORT = int(__import__("os").environ.get("PORT", "8090"))
 NOW = "2026-09-05 12:00:00"
-DOCS = ["LEADERBOARD", "UPGRADING", "CA-COMPAT", "README"]
+DOCS = ["LEADERBOARD", "UPGRADING", "CA-COMPAT", "LICENSING", "README"]
 
 GAMES = [
     (1, "neon-worm", "نيون وورم", "casual"),
@@ -49,6 +51,26 @@ SEED = [
     (4, 990, "عمر", "2026-08-18 12:00:00"), (4, 2400, "لينا", "2026-07-20 09:30:00"),
 ]
 
+# (game_id, licence row) — two games are deliberately NOT servable: bubble-nova has no licence
+# row at all, maze-runner carries a licence type this engine refuses outright.
+SHA40 = "9f2c1ab7d4e80563f21b0c9a7e6d5c4b3a291807"
+SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+LICENSES = [
+    (1, {"license_type": "own", "license_ref": "in-house", "provider": "own",
+         "captured_at": NOW[:10]}),
+    (2, {"license_type": "cc-by", "license_ref": "CC BY 4.0", "provider": "oss",
+         "license_file": "LICENSE.md", "license_sha256": SHA256,
+         "proof_url": "https://example.org/echo-cards", "attribution_required": 1,
+         "attribution_html": 'لعبة «إيكو كاردز» من <a href="https://example.org/echo-cards">'
+                             'example.org</a> برخصة CC BY 4.0',
+         "captured_at": NOW[:10]}),
+    (4, {"license_type": "agpl-3.0", "license_ref": "AGPL-3.0", "provider": "oss",
+         "upstream_repo": "https://git.example/maze", "commit_sha": SHA40,
+         "license_file": "LICENSE", "license_sha256": SHA256,
+         "proof_url": "https://git.example/maze/LICENSE", "attribution_required": 1,
+         "attribution_html": "Maze Runner © its authors, AGPL-3.0", "captured_at": NOW[:10]}),
+]
+
 TYPES = {
     "top": ("all", True), "top-day": ("day", True), "top-week": ("week", True),
     "top-month": ("month", True), "top-all": ("all", False), "top-all-day": ("day", False),
@@ -64,8 +86,8 @@ def build_db() -> sqlite3.Connection:
     conn.executescript((ROOT / "db" / "schema.sqlite.sql").read_text(encoding="utf-8"))
     for gid, slug, title, cat in GAMES:
         conn.execute(
-            "INSERT INTO games (id, slug, title_ar, title_en, category_id, created_at, updated_at) "
-            "VALUES (?,?,?,?,NULL,'2026-08-01 00:00:00','2026-08-01 00:00:00')",
+            "INSERT INTO games (id, slug, title_ar, title_en, category_id, status, created_at, updated_at) "
+            "VALUES (?,?,?,?,NULL,'published','2026-08-01 00:00:00','2026-08-01 00:00:00')",
             (gid, slug, title, slug))
         conn.execute(
             "INSERT INTO categories (id, slug, name_ar, name_en, created_at) "
@@ -74,6 +96,13 @@ def build_db() -> sqlite3.Connection:
     board = Board(conn)
     for gid, score, alias, at in SEED:
         board.submit(gid, score, alias, at)
+    for gid, lic in LICENSES:
+        cols = ", ".join(lic)
+        marks = ", ".join("?" for _ in lic)
+        conn.execute(
+            f"INSERT INTO game_licenses (game_id, {cols}, created_at, updated_at) "
+            f"VALUES (?, {marks}, ?, ?)",
+            (gid, *lic.values(), NOW, NOW))
     return conn
 
 
@@ -168,6 +197,7 @@ def ensure_zip() -> Path:
 
 class Handler(BaseHTTPRequestHandler):
     conn: sqlite3.Connection = None  # type: ignore[assignment]
+    auditor: "Auditor" = None  # type: ignore[assignment]
     gates: str = ""
 
     def log_message(self, *a):  # quieter logs
@@ -212,6 +242,15 @@ class Handler(BaseHTTPRequestHandler):
             if per_game and game is None:
                 self._json({"ok": False, "error": "this type needs ?game=slug"}, 422)
                 return
+            if game is not None:
+                with DB_LOCK:
+                    verdict = self.auditor.can_serve(game[0])
+                if not verdict["ok"]:
+                    self._json({
+                        "ok": False, "error": "بوابة الترخيص: هذه اللعبة غير مرخّصة للعرض",
+                        "verdict": verdict["verdict"], "reasons": verdict["reasons"],
+                    }, 451)
+                    return
             with DB_LOCK:
                 board = Board(self.conn)
                 rows = board.for_type(game[0] if game else None, type_, amount)
@@ -225,6 +264,43 @@ class Handler(BaseHTTPRequestHandler):
                      "score": r[3], "submitted_at": r[4]}
                     for n, r in enumerate(rows, 1)
                 ],
+            })
+            return
+
+        if u.path == "/api/license":
+            slug = (q.get("game") or [""])[0].strip()
+            with DB_LOCK:
+                game = self.conn.execute(
+                    "SELECT id, slug, provider FROM games WHERE slug = ?", (slug,)).fetchone()
+                if game is None:
+                    self._json({"ok": False, "error": f"game '{slug}' not found"}, 404)
+                    return
+                v = self.auditor.audit(game[0], "dynamic", {"game_provider": game[2]})
+                rows = self.auditor.licenses_for(game[0])
+            self._json({
+                "ok": True, "game": game[1], "servable": v["ok"], "verdict": v["verdict"],
+                "attribution": v["attribution"], "reasons": v["reasons"], "warnings": v["warnings"],
+                "licenses": [{k: r.get(k) for k in
+                              ("provider", "license_type", "license_ref", "upstream_repo",
+                               "commit_sha", "proof_url", "attribution_html", "captured_at",
+                               "expires_at", "status")} for r in rows],
+            }, 200 if v["ok"] else 451)
+            return
+
+        if u.path == "/api/audit":
+            with DB_LOCK:
+                report = self.auditor.audit_published("dynamic", {"commercial_install": True})
+                ledger = self.conn.execute(
+                    "SELECT COUNT(*), MAX(rules_version) FROM license_audits").fetchone()
+                unlicensed = self.auditor.unlicensed()
+            self._json({
+                "ok": True, "audited": report["audited"], "ok_count": report["ok"],
+                "warn": report["warn"], "blocked": report["blocked"],
+                "ledger_rows": ledger[0], "rules_version": ledger[1],
+                "unlicensed": unlicensed,
+                "rows": [{"game": r["game_slug"], "verdict": r["verdict"],
+                          "license_type": r["license_type"], "reasons": r["reasons"],
+                          "warnings": r["warnings"]} for r in report["rows"]],
             })
             return
 
@@ -279,6 +355,9 @@ WRAP = """<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
 def main() -> int:
     global GATES_OUT
     Handler.conn = build_db()
+    policy = Policy(json.loads((ROOT / "db" / "license_rules.json").read_text(encoding="utf-8")))
+    Handler.auditor = Auditor(Handler.conn, policy)
+    Handler.auditor.audit_published("dynamic", {"commercial_install": True})
     try:
         GATES_OUT = subprocess.run(
             ["npm", "test"], cwd=str(ROOT), capture_output=True, text=True, timeout=120

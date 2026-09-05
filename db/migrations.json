@@ -6,7 +6,9 @@
     "v1/v2 never shipped to a buyer, so '3' is the first real step.",
     "The Migrator tolerates these per-statement errors so a half-applied step can re-run:",
     "mysql 1060 duplicate column / 1061 duplicate key / 1091 missing column-key on DROP;",
-    "sqlite duplicate column / already exists / no such <object>."
+    "sqlite duplicate column / already exists / no such <object>.",
+    "v4 repairs a generator defect: PRIMARY KEY was emitted for MySQL only, so on SQLite `settings` / `game_tag` / `collection_game` had no uniqueness at all. The step dedupes first (a UNIQUE INDEX on dirty data would abort the upgrade and strand the buyer), then creates the index. `mysql` is an empty list on purpose — that baseline always declared these keys, so there is nothing to repair.",
+    "v5 adds the licence ledger (game_licenses.audited_at/audit_verdict + license_audits) — the CREATE TABLE inside it is byte-identical to db/schema.mysql.sql / schema.sqlite.sql, which tools/verify_php.py re-checks on every run so the baseline and the upgrade path cannot drift."
   ],
   "3": {
     "note": "leaderboard time buckets: period + period_key columns, bucket-aware unique keys",
@@ -33,6 +35,38 @@
       "CREATE UNIQUE INDEX IF NOT EXISTS \"uq_leaderboard_game_id_alias_period_period_key\" ON \"leaderboard\" (\"game_id\", \"alias\", \"period\", \"period_key\")",
       "CREATE INDEX IF NOT EXISTS \"idx_leaderboard_game_id_period_period_key_score\" ON \"leaderboard\" (\"game_id\", \"period\", \"period_key\", \"score\")",
       "CREATE INDEX IF NOT EXISTS \"idx_leaderboard_period_period_key_score\" ON \"leaderboard\" (\"period\", \"period_key\", \"score\")"
+    ]
+  },
+  "4": {
+    "note": "constraint repair: sqlite was missing PRIMARY KEY on settings/game_tag/collection_game",
+    "mysql": [],
+    "sqlite": [
+      "DELETE FROM \"settings\" WHERE rowid NOT IN (SELECT MAX(rowid) FROM \"settings\" GROUP BY \"key_name\")",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"uq_settings_key_name\" ON \"settings\" (\"key_name\")",
+      "DELETE FROM \"game_tag\" WHERE rowid NOT IN (SELECT MIN(rowid) FROM \"game_tag\" GROUP BY \"game_id\", \"tag_id\")",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"uq_game_tag_game_id_tag_id\" ON \"game_tag\" (\"game_id\", \"tag_id\")",
+      "DELETE FROM \"collection_game\" WHERE rowid NOT IN (SELECT MIN(rowid) FROM \"collection_game\" GROUP BY \"collection_id\", \"game_id\")",
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"uq_collection_game_collection_id_game_id\" ON \"collection_game\" (\"collection_id\", \"game_id\")"
+    ]
+  },
+  "5": {
+    "note": "licence ledger: game_licenses.audited_at/audit_verdict cache + append-only license_audits",
+    "mysql": [
+      "ALTER TABLE `game_licenses` ADD COLUMN `audited_at` DATETIME NULL AFTER `status`",
+      "ALTER TABLE `game_licenses` ADD COLUMN `audit_verdict` VARCHAR(16) NOT NULL DEFAULT '' AFTER `audited_at`",
+      "ALTER TABLE `game_licenses` ADD INDEX `idx_game_licenses_audit_verdict` (`audit_verdict`)",
+      "CREATE TABLE IF NOT EXISTS `license_audits` (\n  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,\n  `game_id` INT NOT NULL,\n  `license_id` INT NULL,\n  `verdict` VARCHAR(16) NOT NULL,\n  `mode` VARCHAR(8) NOT NULL DEFAULT 'dynamic',\n  `rules_version` INT NOT NULL DEFAULT 0,\n  `reasons` TEXT NULL,\n  `details` TEXT NULL,\n  `audited_at` DATETIME NOT NULL,\n  CONSTRAINT `fk_license_audits_game_id` FOREIGN KEY (`game_id`) REFERENCES `games` (`id`) ON DELETE CASCADE,\n  CONSTRAINT `fk_license_audits_license_id` FOREIGN KEY (`license_id`) REFERENCES `game_licenses` (`id`) ON DELETE SET NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_license_audits_game_id_audited_at` (`game_id`, `audited_at`),\n  KEY `idx_license_audits_verdict` (`verdict`),\n  KEY `idx_license_audits_rules_version` (`rules_version`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;",
+      "INSERT INTO `settings` (`key_name`, `value_type`, `value_text`, `updated_at`) VALUES ('license.rules_version', 'int', '1', NOW()) ON DUPLICATE KEY UPDATE `value_text` = '1'"
+    ],
+    "sqlite": [
+      "ALTER TABLE \"game_licenses\" ADD COLUMN \"audited_at\" TEXT NULL",
+      "ALTER TABLE \"game_licenses\" ADD COLUMN \"audit_verdict\" TEXT NOT NULL DEFAULT ''",
+      "CREATE INDEX IF NOT EXISTS \"idx_game_licenses_audit_verdict\" ON \"game_licenses\" (\"audit_verdict\")",
+      "CREATE TABLE IF NOT EXISTS \"license_audits\" (\n  \"id\" INTEGER PRIMARY KEY AUTOINCREMENT,\n  \"game_id\" INTEGER NOT NULL REFERENCES \"games\" (\"id\") ON DELETE CASCADE,\n  \"license_id\" INTEGER NULL REFERENCES \"game_licenses\" (\"id\") ON DELETE SET NULL,\n  \"verdict\" TEXT NOT NULL,\n  \"mode\" TEXT NOT NULL DEFAULT 'dynamic',\n  \"rules_version\" INTEGER NOT NULL DEFAULT 0,\n  \"reasons\" TEXT NULL,\n  \"details\" TEXT NULL,\n  \"audited_at\" TEXT NOT NULL\n);",
+      "CREATE INDEX IF NOT EXISTS idx_license_audits_game_id_audited_at ON \"license_audits\" (\"game_id\", \"audited_at\");",
+      "CREATE INDEX IF NOT EXISTS idx_license_audits_verdict ON \"license_audits\" (\"verdict\");",
+      "CREATE INDEX IF NOT EXISTS idx_license_audits_rules_version ON \"license_audits\" (\"rules_version\");",
+      "INSERT INTO \"settings\" (\"key_name\", \"value_type\", \"value_text\", \"updated_at\") VALUES ('license.rules_version', 'int', '1', datetime('now')) ON CONFLICT(\"key_name\") DO UPDATE SET \"value_text\" = excluded.\"value_text\""
     ]
   }
 }

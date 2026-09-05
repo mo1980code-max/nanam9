@@ -43,6 +43,7 @@
       <span class="badge">PHP 8.3 + SQLite/MySQL</span>
       <span class="badge">ترحيلات schema_version</span>
       <span class="badge">عقد متوافق مع CloudArcade</span>
+      <span class="badge">بوابة ترخيص + سجل تدقيق</span>
       <a class="badge dl" href="/download" download>⬇ تحميل الحزمة nawras-arcade.zip</a>
     </div>
   </header>
@@ -68,6 +69,15 @@
     <tbody></tbody>
   </table>
 
+  <div id="lic" class="lic" hidden>
+    <h2 style="margin-top:2.5rem">سجل الترخيص — <span id="licGame"></span></h2>
+    <div id="licBadge"></div>
+    <div id="licBody"></div>
+  </div>
+
+  <h2 style="margin-top:2.5rem">تدقيق الفهرس كاملاً — <code>GET /api/audit</code></h2>
+  <pre id="audit">…يُدقَّق…</pre>
+
   <h2 style="margin-top:2.5rem">البوابات — مخرجات حية من هذا التشغيل</h2>
   <pre id="out">…يُشغّل npm test…</pre>
 
@@ -76,6 +86,7 @@
     <a href="/docs/LEADERBOARD.html">اللوحة والسلال الزمنية</a>
     <a href="/docs/UPGRADING.html">الترحيلات</a>
     <a href="/docs/CA-COMPAT.html">جسر ca_api</a>
+    <a href="/docs/LICENSING.html">طبقة الترخيص</a>
     <a href="/docs/README.html">README</a>
   </nav>
 
@@ -122,8 +133,10 @@ async function load() {
   if (gameSel.value) qs.set('game', gameSel.value);
   const res = await fetch('/api/leaderboard?' + qs);
   const data = await res.json();
-  document.getElementById('pkey').innerHTML =
-    data.ok ? ('مفتاح الفترة الحالي: <code>' + data.period_key + '</code>') : ('⚠ ' + data.error);
+  document.getElementById('pkey').innerHTML = res.status === 451
+    ? ('⛔ ' + data.error + ' — ' + (data.reasons || []).map(r => '<code class="reason">' + r + '</code>').join(' '))
+    : (data.ok ? ('مفتاح الفترة الحالي: <code>' + data.period_key + '</code>') : ('⚠ ' + data.error));
+  loadLicense(gameSel.value);
   const tb = document.querySelector('#board tbody');
   tb.innerHTML = '';
   (data.rows || []).forEach(r => {
@@ -135,10 +148,44 @@ async function load() {
       <td class="when">${r.submitted_at}</td>`;
     tb.appendChild(tr);
   });
+  if (res.status === 451) { tb.innerHTML = '<tr><td colspan="5" style="color:#ff9ab0">451 Unavailable For Legal Reasons</td></tr>'; return; }
   if (!data.rows || !data.rows.length) tb.innerHTML = '<tr><td colspan="5" style="color:#9aa3c7">لا نتائج في هذه السلة</td></tr>';
 }
 
+const LABELS = { no_license_row: 'لا يوجد أي صف ترخيص', type_forbidden: 'نوع الترخيص ممنوع في هذا المحرك',
+  license_expired: 'انتهت مدة الترخيص', missing_attribution: 'النسب مطلوب ولا يوجد نص نسب',
+  wildcard_origin: 'allow_origins فيه *', unknown_license_type: 'نوع غير معروف',
+  license_not_active: 'الصف ليس سارياً', work_disputed: 'العمل متنازَع عليه' };
+
+async function loadLicense(slug) {
+  const box = document.getElementById('lic');
+  if (!slug) { box.hidden = true; return; }
+  const res = await fetch('/api/license?game=' + encodeURIComponent(slug));
+  const d = await res.json();
+  box.hidden = false;
+  document.getElementById('licGame').textContent = slug;
+  const ar = { ok: 'يُخدم', warn: 'يُخدم مع تحذير', blocked: 'محجوبة' }[d.verdict] || d.verdict;
+  document.getElementById('licBadge').innerHTML =
+    '<span class="pill ' + d.verdict + '">' + ar + '</span>' +
+    (d.licenses[0] ? '<code>' + d.licenses[0].license_type + '</code> · <code>' + d.licenses[0].license_ref + '</code>' : '');
+  let html = '';
+  if (d.reasons.length) html += '<p>أسباب الحجب: ' + d.reasons.map(r => '<code class="reason">' + r + '</code> ' + (LABELS[r] || '')).join(' · ') + '</p>';
+  if (d.warnings.length) html += '<p>تحذيرات: ' + d.warnings.map(w => '<code>' + w + '</code>').join(' ') + '</p>';
+  if (d.attribution) html += '<p><b>النسب المستحق:</b> ' + d.attribution + '</p>';
+  if (d.licenses[0] && d.licenses[0].proof_url) html += '<p>رابط الإثبات: <a href="' + d.licenses[0].proof_url + '">' + d.licenses[0].proof_url + '</a></p>';
+  if (!d.licenses.length) html += '<p style="color:#ff9ab0">لا صفوف في <code>game_licenses</code> لهذه اللعبة — وهذا سبب الحجب.</p>';
+  document.getElementById('licBody').innerHTML = html;
+}
+
 fetch('/api/gates').then(r => r.json()).then(d => document.getElementById('out').textContent = d.output);
+fetch('/api/audit').then(r => r.json()).then(d => {
+  document.getElementById('audit').textContent =
+    'دُقّقت ' + d.audited + ' لعبة · سليمة ' + d.ok_count + ' · بتحذير ' + d.warn + ' · محجوبة ' + d.blocked +
+    '\nسجل التدقيق license_audits: ' + d.ledger_rows + ' صفاً · إصدار القواعد v' + d.rules_version +
+    '\nبلا أي صف ترخيص: ' + (d.unlicensed.map(g => g.game_slug).join(', ') || '—') + '\n\n' +
+    d.rows.map(r => '  ' + (r.verdict === 'ok' ? '✓' : r.verdict === 'warn' ? '!' : '⛔') + ' ' + r.game.padEnd(13) +
+      (r.license_type || '—').padEnd(10) + (r.reasons.length ? r.reasons.join(', ') : r.warnings.join(', '))).join('\n');
+});
 load();
 </script>
 </body>

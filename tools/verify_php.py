@@ -20,6 +20,12 @@ What it checks (each was proven non-vacuous by injecting a bug and watching exit
   6. migrations        — db/migrations.json parses; the highest version equals
                          Migrator::CURRENT; every step has both dialect lists.
   7. JS bridge         — ca-compat.js only references the eight documented leaderboard types.
+  8. licensing         — db/license_rules.json is the ONLY place a licence type is named (no type
+                         string in src/Licensing/ code), LicensePolicy::CODES and the policy's
+                         finding_labels are the same set in both directions, the auditor's SQL is
+                         literally the SQL tools/prove_runtime.py proves, migration CREATE TABLE
+                         blocks match the generated schema column-for-column, and both write
+                         endpoints really do pass the licence gate.
 
 Exit 0 = everything holds. Any finding exits 1.
 """
@@ -55,8 +61,12 @@ def check(label: str, cond: bool, detail: str = "") -> None:
 
 
 # --------------------------------------------------------------------------- php "lexer"
-def strip_php(source: str) -> tuple[str, str]:
-    """Returns (code_with_strings_blanked, raw_source)."""
+def strip_php(source: str, keep_strings: bool = False) -> tuple[str, str]:
+    """Returns (code_with_strings_blanked, raw_source).
+
+    keep_strings=True still removes comments but preserves string contents — used by the licence
+    purity gate, which must see a hardcoded 'type' literal in code while ignoring docblock prose.
+    """
     out = []
     i, n = 0, len(source)
     in_line_comment = in_block_comment = in_single = in_double = False
@@ -80,22 +90,22 @@ def strip_php(source: str) -> tuple[str, str]:
             continue
         if in_single:
             if c == "\\":
-                out.append("  ")
+                out.append(c + (source[i + 1] if keep_strings and i + 1 < n else " "))
                 i += 2
                 continue
             if c == "'":
                 in_single = False
-            out.append(" ")
+            out.append(c if keep_strings else " ")
             i += 1
             continue
         if in_double:
             if c == "\\":
-                out.append("  ")
+                out.append(c + (source[i + 1] if keep_strings and i + 1 < n else " "))
                 i += 2
                 continue
             if c == '"':
                 in_double = False
-            out.append(" ")
+            out.append(c if keep_strings else " ")
             i += 1
             continue
         if c == "/" and nxt == "/":
@@ -113,12 +123,12 @@ def strip_php(source: str) -> tuple[str, str]:
             continue
         if c == "'":
             in_single = True
-            out.append(" ")
+            out.append(c if keep_strings else " ")
             i += 1
             continue
         if c == '"':
             in_double = True
-            out.append(" ")
+            out.append(c if keep_strings else " ")
             i += 1
             continue
         out.append(c)
@@ -147,7 +157,7 @@ def parse_class(code: str) -> Klass:
         for part in ctor.group(1).split(","):
             part = part.strip()
             pm = re.match(
-                r"((?:(?:private|public|protected|readonly)\s+)*)([\w\\]+)\s+\$(\w+)", part)
+                r"((?:(?:private|public|protected|readonly)\s+)*)(\??[\w\\|]+)\s+\$(\w+)", part)
             if pm:
                 k.ctor_args.append(pm.group(3))
                 # promoted property (has a visibility modifier) -> typed property
@@ -160,7 +170,10 @@ def parse_class(code: str) -> Klass:
             part = part.strip()
             if not part:
                 continue
-            if re.match(r"(?:(?:private|public|protected|readonly)\s+)*[\w\\|]+\s+\$", part):
+            # \?? matters: without it every nullable parameter (?int $userId) was invisible, so a
+            # method declared with 6 parameters looked like a 2-parameter one and arity checks were
+            # comparing against the wrong number.
+            if re.match(r"(?:(?:private|public|protected|readonly)\s+)*\??[\w\\|]+\s+\$", part):
                 count += 1
         k.methods[name] = count
     for pp in re.finditer(r"private\s+(?:readonly\s+)?([\w\\]+)\s+\$(\w+)\s*;", code):
@@ -179,6 +192,54 @@ def arity_of(raw_args: str) -> int:
         elif c == "," and depth == 0:
             count += 1
     return count
+
+
+def balanced_args(code: str, open_index: int) -> str:
+    """Argument list of the call whose "(" sits at open_index, honouring nested parentheses.
+
+    The naive `\(([^)]*)\)` this replaces stopped at the first ")", so `new C($a, $b->f())`
+    was read as a 2-argument call — arity checks passed by luck, not by agreement.
+    """
+    depth = 0
+    for i in range(open_index, len(code)):
+        if code[i] in "([{":
+            depth += 1
+        elif code[i] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return code[open_index + 1:i]
+    return code[open_index + 1:]
+
+
+def php_method(src: str, name: str) -> str:
+    """Body of one PHP method, brace-matched. Empty string when the method does not exist."""
+    m = re.search(r"function\s+" + re.escape(name) + r"\s*\([^)]*\)[^{]*\{", src)
+    if not m:
+        return ""
+    depth, i = 0, m.end() - 1
+    while i < len(src):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[m.end():i]
+        i += 1
+    return ""
+
+
+def ddl_columns(statement: str) -> list:
+    """Column names of a CREATE TABLE statement, in declaration order."""
+    cols = []
+    for line in statement.splitlines()[1:]:
+        m = re.match(r'^\s*[`"](\w+)[`"]\s', line)
+        if m:
+            cols.append(m.group(1))
+    return cols
+
+
+def squash(text: str) -> str:
+    return re.sub(r"\s+", " ", text)
 
 
 # --------------------------------------------------------------------------- checks
@@ -246,9 +307,9 @@ def main() -> int:
         for m in re.finditer(r"new\s+(DateTimeImmutable|DateTimeZone|PDOException)\s*\(", code):
             pass  # builtins vary, skip
         for cls in classes:
-            for m in re.finditer(r"new\s+" + cls + r"\s*\(([^)]*)\)", code):
+            for m in re.finditer(r"new\s+" + cls + r"\s*\(", code):
                 want = len(classes[cls].ctor_args)
-                got = arity_of(m.group(1))
+                got = arity_of(balanced_args(code, m.end() - 1))
                 if want and got != want:
                     check(f"{path.name}: new {cls}(...) arity", False,
                           f"expected {want} args, got {got}")
@@ -256,8 +317,9 @@ def main() -> int:
         for prop, typ in classes.get(_class_name(path), Klass("?")).props.items():
             if typ not in classes:
                 continue
-            for cm in re.finditer(r"\$this->" + prop + r"->(\w+)\s*\(([^)]*)\)", code):
-                meth, args = cm.group(1), cm.group(2)
+            for cm in re.finditer(r"\$this->" + prop + r"->(\w+)\s*\(", code):
+                meth = cm.group(1)
+                args = balanced_args(code, cm.end() - 1)
                 if meth not in classes[typ].methods and meth != "__construct":
                     check(f"{path.name}: $this->{prop}->{meth}() exists",
                           False, f"no such method on {typ}")
@@ -326,6 +388,79 @@ def main() -> int:
              "top-all-week", "top-all-month"}
     used = set(re.findall(r"'(top[\w-]*)'", bridge))
     check("ca-compat.js uses only documented types", used <= VALID, str(used - VALID))
+
+
+    # -- 8: licensing --------------------------------------------------------------------
+    licensing = sorted((SRC / "Licensing").glob("*.php"))
+    policy_path = ROOT / "db" / "license_rules.json"
+    if not licensing or not policy_path.is_file():
+        check("licensing layer present", False, "db/license_rules.json / src/Licensing/ missing")
+    else:
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        sources = {f: f.read_text(encoding="utf-8") for f in licensing}
+        code_only = {f: strip_php(raw, keep_strings=True)[0] for f, raw in sources.items()}
+        all_src = "\n".join(sources.values())
+
+        # 8a · the policy file is the only place a licence type is named
+        for name in policy["types"]:
+            hits = [f.name for f in licensing
+                    if f"'{name}'" in code_only[f] or f'"{name}"' in code_only[f]]
+            check(f"licence type '{name}' is not hardcoded in src/Licensing/", hits == [], str(hits))
+
+        # 8b · one finding vocabulary on both sides
+        php_policy = (SRC / "Licensing" / "LicensePolicy.php").read_text(encoding="utf-8")
+        block = re.search(r"const\s+CODES\s*=\s*\[(.*?)\];", php_policy, re.S)
+        codes = re.findall(r"'([a-z0-9_]+)'", block.group(1)) if block else []
+        labels = set(policy.get("finding_labels", {}))
+        check("LicensePolicy::CODES parsed", bool(codes), "const CODES not found")
+        check("every CODES entry is labelled in the policy", set(codes) <= labels,
+              str(sorted(set(codes) - labels)))
+        check("every policy label is used by LicensePolicy", labels <= set(codes),
+              str(sorted(labels - set(codes))))
+        unreachable = [c for c in codes
+                       if f"'{c}'" not in all_src
+                       and not (c.startswith(("missing_", "bad_"))
+                                and "'" + c.split("_")[0] + "_' ." in all_src)]
+        check("every finding code is actually emitted", unreachable == [], str(unreachable))
+
+        # 8c · the SQL the auditor runs is the SQL the runtime proof exercises
+        auditor = (SRC / "Licensing" / "LicenseAuditor.php").read_text(encoding="utf-8")
+        for frag in ["FROM game_licenses WHERE game_id = ? ORDER BY id ASC",
+                     "LEFT JOIN game_licenses gl ON gl.game_id = g.id",
+                     "AND NOT EXISTS (SELECT 1 FROM game_licenses gl WHERE gl.game_id = g.id"
+                     " AND gl.status = ?)",
+                     "INSERT INTO license_audits (game_id, license_id, verdict, mode, rules_version,"
+                     " reasons, details, audited_at)"]:
+            check(f"licence proof sync: '{frag.strip()[:52]}...' in both",
+                  squash(frag) in squash(auditor) and squash(frag) in squash(prove))
+
+        # 8d · a migration that creates a table must create it exactly as the baseline does
+        for v in versions:
+            for dialect in ("mysql", "sqlite"):
+                for stmt in mig[str(v)][dialect]:
+                    m = re.search(r"CREATE TABLE IF NOT EXISTS [`\"](\w+)[`\"]", stmt)
+                    if not m:
+                        continue
+                    table = m.group(1)
+                    want = list(tables[table]["columns"]) if table in tables else []
+                    got = ddl_columns(stmt)
+                    check(f"migration {v} ({dialect}) {table} columns match the baseline",
+                          got == want, f"got {got}")
+
+        # 8e · the rules version stamped by the newest migration is the version the policy declares
+        newest = mig.get(str(max(versions)), {}) if versions else {}
+        stamped = re.findall(r"""license\.rules_version['`"]?,\s*'int',\s*'(\d+)'""",
+                             "\n".join(newest.get("mysql", []) + newest.get("sqlite", [])))
+        check("migration stamps the current rules version",
+              bool(stamped) and all(int(s) == int(policy.get("version", -1)) for s in stamped),
+              f"stamped={stamped} policy v{policy.get('version')}")
+
+        # 8f · the write endpoints really do pass the gate
+        site_src = (SRC / "Front" / "SiteController.php").read_text(encoding="utf-8")
+        check("submitScore() passes the licence gate", "$this->gate(" in php_method(site_src, "submitScore"))
+        check("play() passes the licence gate", "$this->gate(" in php_method(site_src, "play"))
+        check("gate() consults LicenseAuditor",
+              "$this->licenses->canServe(" in php_method(site_src, "gate"))
 
     print()
     if FAILURES:

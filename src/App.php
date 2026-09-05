@@ -7,6 +7,8 @@ namespace Nawras;
 use Nawras\Db\Connection;
 use Nawras\Gamify\Leaderboard;
 use Nawras\Gamify\Signer;
+use Nawras\Licensing\LicenseAuditor;
+use Nawras\Licensing\LicensePolicy;
 
 if (!\defined('ARCADE_ROOT')) {
     \define('ARCADE_ROOT', \dirname(__DIR__));
@@ -25,6 +27,10 @@ final class App
 
     private Signer $signer;
 
+    private LicensePolicy $policy;
+
+    private LicenseAuditor $licenses;
+
     public function __construct(private readonly array $config)
     {
         require_once __DIR__ . '/autoload.php';
@@ -32,6 +38,8 @@ final class App
         $secret = (string) ($config['secret'] ?? '');
         $this->signer = new Signer($secret);
         $this->board = new Leaderboard($this->db, $secret);
+        $this->policy = LicensePolicy::load();
+        $this->licenses = new LicenseAuditor($this->db, $this->policy);
     }
 
     public static function boot(?array $config = null): self
@@ -70,6 +78,23 @@ final class App
     public function signer(): Signer
     {
         return $this->signer;
+    }
+
+    /** The licence gate — nothing is served, played or exported past this. */
+    public function licensing(): LicenseAuditor
+    {
+        return $this->licenses;
+    }
+
+    public function licensePolicy(): LicensePolicy
+    {
+        return $this->policy;
+    }
+
+    /** True when this install sells access or runs ads; cc-by-nc work is refused when it is. */
+    public function isCommercial(): bool
+    {
+        return (bool) ($this->config['commercial'] ?? true);
     }
 
     public function secret(): string

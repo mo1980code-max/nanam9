@@ -20,7 +20,7 @@ use RuntimeException;
  */
 final class Migrator
 {
-    public const CURRENT = 3;
+    public const CURRENT = 5;
 
     /** MySQL server error codes that mean "already applied" for one statement. */
     private const IGNORABLE_MYSQL = [1060, 1061, 1091];

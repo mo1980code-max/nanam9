@@ -1,0 +1,382 @@
+{
+  "_note": [
+    "Single source of truth for licence policy. Nawras\\Licensing\\LicensePolicy loads this file",
+    "and tools/gen_license_rules.py copies it verbatim into public/assets/license-rules.json, so",
+    "the PHP runtime and the static export decide with the SAME bytes — no second list to drift.",
+    "A licence type that is not in `types` is refused outright (unknown_license_type); a licence",
+    "row that is missing evidence its type demands is refused too. Adding a rule here is the only",
+    "supported way to change policy: tools/verify_php.py fails the build if LicensePolicy.php",
+    "mentions a single licence type by name."
+  ],
+  "version": 1,
+  "modes": [
+    "dynamic",
+    "export"
+  ],
+  "statuses": {
+    "active": {
+      "servable": true,
+      "blocking": false,
+      "label_ar": "ساري",
+      "label_en": "Active"
+    },
+    "pending": {
+      "servable": false,
+      "blocking": false,
+      "label_ar": "قيد التحقق",
+      "label_en": "Pending review"
+    },
+    "expired": {
+      "servable": false,
+      "blocking": false,
+      "label_ar": "منتهي",
+      "label_en": "Expired"
+    },
+    "revoked": {
+      "servable": false,
+      "blocking": true,
+      "label_ar": "مسحوب",
+      "label_en": "Revoked"
+    },
+    "disputed": {
+      "servable": false,
+      "blocking": true,
+      "label_ar": "متنازَع عليه",
+      "label_en": "Disputed"
+    }
+  },
+  "evidence": [
+    "commit_sha",
+    "license_file",
+    "license_sha256",
+    "proof_url",
+    "invoice_ref",
+    "expires_at"
+  ],
+  "types": {
+    "own": {
+      "label_ar": "إنتاج داخلي",
+      "label_en": "In-house original",
+      "note_en": "Written for this install. No third-party evidence exists, so none is demanded.",
+      "attribution_required": false,
+      "share_alike": false,
+      "copyleft": false,
+      "commercial_ok": true,
+      "redistribution_ok": true,
+      "forbidden": false,
+      "needs": {
+        "commit_sha": false,
+        "license_file": false,
+        "license_sha256": false,
+        "proof_url": false,
+        "invoice_ref": false,
+        "expires_at": false
+      }
+    },
+    "cc0": {
+      "label_ar": "CC0 — ملك عام",
+      "label_en": "CC0 public domain",
+      "note_en": "Dedication to the public domain. Keep the URL that states it; no notice is owed.",
+      "attribution_required": false,
+      "share_alike": false,
+      "copyleft": false,
+      "commercial_ok": true,
+      "redistribution_ok": true,
+      "forbidden": false,
+      "needs": {
+        "commit_sha": false,
+        "license_file": false,
+        "license_sha256": false,
+        "proof_url": true,
+        "invoice_ref": false,
+        "expires_at": false
+      }
+    },
+    "cc-by": {
+      "label_ar": "CC-BY — نسب المصنف",
+      "label_en": "CC BY 4.0",
+      "note_en": "Attribution is the whole bargain: without attribution_html the copy is infringing.",
+      "attribution_required": true,
+      "share_alike": false,
+      "copyleft": false,
+      "commercial_ok": true,
+      "redistribution_ok": true,
+      "forbidden": false,
+      "needs": {
+        "commit_sha": false,
+        "license_file": true,
+        "license_sha256": true,
+        "proof_url": true,
+        "invoice_ref": false,
+        "expires_at": false
+      }
+    },
+    "cc-by-sa": {
+      "label_ar": "CC-BY-SA — نسب + مشاركة بالمثل",
+      "label_en": "CC BY-SA 4.0",
+      "note_en": "Derivatives must stay under the same licence — the static export inherits it.",
+      "attribution_required": true,
+      "share_alike": true,
+      "copyleft": false,
+      "commercial_ok": true,
+      "redistribution_ok": true,
+      "forbidden": false,
+      "needs": {
+        "commit_sha": false,
+        "license_file": true,
+        "license_sha256": true,
+        "proof_url": true,
+        "invoice_ref": false,
+        "expires_at": false
+      }
+    },
+    "cc-by-nc": {
+      "label_ar": "CC-BY-NC — غير تجاري",
+      "label_en": "CC BY-NC 4.0",
+      "note_en": "Non-commercial only: an install that sells access or runs ads may not serve it.",
+      "attribution_required": true,
+      "share_alike": false,
+      "copyleft": false,
+      "commercial_ok": false,
+      "redistribution_ok": true,
+      "forbidden": false,
+      "needs": {
+        "commit_sha": false,
+        "license_file": true,
+        "license_sha256": true,
+        "proof_url": true,
+        "invoice_ref": false,
+        "expires_at": false
+      }
+    },
+    "mit": {
+      "label_ar": "MIT",
+      "label_en": "MIT",
+      "note_en": "Permissive, but the copyright notice must ship and the source must be pinned to a commit.",
+      "attribution_required": true,
+      "share_alike": false,
+      "copyleft": false,
+      "commercial_ok": true,
+      "redistribution_ok": true,
+      "forbidden": false,
+      "needs": {
+        "commit_sha": true,
+        "license_file": true,
+        "license_sha256": true,
+        "proof_url": true,
+        "invoice_ref": false,
+        "expires_at": false
+      }
+    },
+    "apache-2.0": {
+      "label_ar": "أباتشي 2.0",
+      "label_en": "Apache-2.0",
+      "note_en": "Permissive with an explicit patent grant and a NOTICE requirement.",
+      "attribution_required": true,
+      "share_alike": false,
+      "copyleft": false,
+      "commercial_ok": true,
+      "redistribution_ok": true,
+      "forbidden": false,
+      "needs": {
+        "commit_sha": true,
+        "license_file": true,
+        "license_sha256": true,
+        "proof_url": true,
+        "invoice_ref": false,
+        "expires_at": false
+      }
+    },
+    "gpl-3.0": {
+      "label_ar": "GPL-3.0",
+      "label_en": "GPL-3.0",
+      "note_en": "Copyleft: allowed to serve, but a sold bundle containing it must offer its source. Flagged, not blocked.",
+      "attribution_required": true,
+      "share_alike": true,
+      "copyleft": true,
+      "commercial_ok": true,
+      "redistribution_ok": true,
+      "forbidden": false,
+      "needs": {
+        "commit_sha": true,
+        "license_file": true,
+        "license_sha256": true,
+        "proof_url": true,
+        "invoice_ref": false,
+        "expires_at": false
+      }
+    },
+    "agpl-3.0": {
+      "label_ar": "AGPL-3.0 — ممنوع",
+      "label_en": "AGPL-3.0 — forbidden",
+      "note_en": "Network copyleft reaches the server itself: serving it from a sold engine would copyleft the engine. Refused outright.",
+      "attribution_required": true,
+      "share_alike": true,
+      "copyleft": true,
+      "commercial_ok": true,
+      "redistribution_ok": false,
+      "forbidden": true,
+      "needs": {
+        "commit_sha": true,
+        "license_file": true,
+        "license_sha256": true,
+        "proof_url": true,
+        "invoice_ref": false,
+        "expires_at": false
+      }
+    },
+    "commercial": {
+      "label_ar": "رخصة تجارية مدفوعة",
+      "label_en": "Paid commercial licence",
+      "note_en": "Bought per install: invoice plus a term. Never copied into a redistributed bundle.",
+      "attribution_required": false,
+      "share_alike": false,
+      "copyleft": false,
+      "commercial_ok": true,
+      "redistribution_ok": false,
+      "forbidden": false,
+      "needs": {
+        "commit_sha": false,
+        "license_file": false,
+        "license_sha256": false,
+        "proof_url": true,
+        "invoice_ref": true,
+        "expires_at": true
+      }
+    }
+  },
+  "formats": {
+    "commit_sha": {
+      "pattern": "^[0-9a-f]{40}$",
+      "length": 40
+    },
+    "license_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "length": 64
+    },
+    "proof_url": {
+      "schemes": [
+        "http://",
+        "https://"
+      ]
+    },
+    "expires_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "length": 10
+    }
+  },
+  "origins": {
+    "wildcard_allowed": false,
+    "separator": ",",
+    "max": 8
+  },
+  "expiry": {
+    "warn_days_before": 30
+  },
+  "finding_labels": {
+    "no_license_row": {
+      "ar": "لا يوجد أي صف ترخيص لهذه اللعبة",
+      "en": "No licence row at all for this game"
+    },
+    "work_disputed": {
+      "ar": "يوجد صف مسحوب أو متنازَع عليه على العمل نفسه",
+      "en": "A revoked/disputed row exists on the same work"
+    },
+    "license_not_active": {
+      "ar": "صف الترخيص ليس بحالة ساري",
+      "en": "Licence row is not active"
+    },
+    "unknown_license_type": {
+      "ar": "نوع ترخيص غير معروف",
+      "en": "Unknown licence type"
+    },
+    "type_forbidden": {
+      "ar": "نوع الترخيص ممنوع في هذا المحرك",
+      "en": "Licence type is forbidden by this engine"
+    },
+    "missing_commit_sha": {
+      "ar": "لا يوجد تثبيت على commit",
+      "en": "No commit pin recorded"
+    },
+    "missing_license_file": {
+      "ar": "لا يوجد ملف الترخيص",
+      "en": "No licence file recorded"
+    },
+    "missing_license_sha256": {
+      "ar": "لا يوجد بصمة SHA-256 لملف الترخيص",
+      "en": "No SHA-256 of the licence file"
+    },
+    "missing_proof_url": {
+      "ar": "لا يوجد رابط إثبات",
+      "en": "No proof URL"
+    },
+    "missing_invoice_ref": {
+      "ar": "لا يوجد مرجع فاتورة",
+      "en": "No invoice reference"
+    },
+    "missing_expires_at": {
+      "ar": "لا يوجد تاريخ انتهاء لرخصة محدّدة المدة",
+      "en": "Term licence without an expiry date"
+    },
+    "bad_commit_sha": {
+      "ar": "بصمة commit غير صالحة",
+      "en": "Malformed commit sha"
+    },
+    "bad_license_sha256": {
+      "ar": "بصمة SHA-256 غير صالحة",
+      "en": "Malformed licence sha256"
+    },
+    "bad_proof_url": {
+      "ar": "رابط الإثبات ليس http(s)",
+      "en": "Proof URL is not http(s)"
+    },
+    "bad_expires_at": {
+      "ar": "تاريخ انتهاء غير قابل للقراءة",
+      "en": "Expiry date cannot be parsed"
+    },
+    "license_expired": {
+      "ar": "انتهت مدة الترخيص",
+      "en": "Licence has expired"
+    },
+    "missing_attribution": {
+      "ar": "النسب مطلوب ولا يوجد نص نسب",
+      "en": "Attribution required but none recorded"
+    },
+    "wildcard_origin": {
+      "ar": "allow_origins يحتوي على * — أي موقع يستطيع التضمين",
+      "en": "allow_origins contains * — any origin may embed"
+    },
+    "not_commercial_ok": {
+      "ar": "الترخيص غير تجاري وهذا التثبيت تجاري",
+      "en": "Non-commercial licence on a commercial install"
+    },
+    "no_redistribution": {
+      "ar": "لا يجوز نسخ هذا العمل في تصدير ساكن",
+      "en": "This work may not be copied into a static export"
+    },
+    "copyleft_review": {
+      "ar": "رخصة copyleft — راجع التزامات المصدر قبل البيع",
+      "en": "Copyleft licence — review source obligations before selling"
+    },
+    "unpinned_upstream": {
+      "ar": "يوجد commit بلا مستودع upstream",
+      "en": "Commit pin without an upstream repo"
+    },
+    "no_capture_date": {
+      "ar": "لم يُسجَّل تاريخ التقاط الإثبات",
+      "en": "No evidence capture date recorded"
+    },
+    "provider_mismatch": {
+      "ar": "مزوّد اللعبة يختلف عن مزوّد صف الترخيص",
+      "en": "Game provider differs from the licence row provider"
+    },
+    "expires_soon": {
+      "ar": "الترخيص ينتهي قريباً",
+      "en": "Licence expires soon"
+    },
+    "too_many_origins": {
+      "ar": "عدد origins يتجاوز الحد",
+      "en": "More origins than the policy allows"
+    }
+  }
+}

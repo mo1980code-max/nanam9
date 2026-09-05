@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS `settings` (
   `key_name` VARCHAR(80) NOT NULL,
   `value_type` VARCHAR(16) NOT NULL DEFAULT 'string',
   `value_text` TEXT NULL,
-  `updated_at` DATETIME NOT NULL
+  `updated_at` DATETIME NOT NULL,
+  PRIMARY KEY (`key_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `users` (
@@ -124,6 +125,8 @@ CREATE TABLE IF NOT EXISTS `game_licenses` (
   `captured_at` DATE NULL,
   `expires_at` DATE NULL,
   `status` VARCHAR(16) NOT NULL DEFAULT 'active',
+  `audited_at` DATETIME NULL,
+  `audit_verdict` VARCHAR(16) NOT NULL DEFAULT '',
   `notes` TEXT NULL,
   `created_at` DATETIME NOT NULL,
   `updated_at` DATETIME NOT NULL,
@@ -132,7 +135,26 @@ CREATE TABLE IF NOT EXISTS `game_licenses` (
   UNIQUE KEY `uq_game_licenses_game_id_provider_external_id` (`game_id`, `provider`, `external_id`),
   KEY `idx_game_licenses_status` (`status`),
   KEY `idx_game_licenses_license_type` (`license_type`),
-  KEY `idx_game_licenses_expires_at` (`expires_at`)
+  KEY `idx_game_licenses_expires_at` (`expires_at`),
+  KEY `idx_game_licenses_audit_verdict` (`audit_verdict`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `license_audits` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `game_id` INT NOT NULL,
+  `license_id` INT NULL,
+  `verdict` VARCHAR(16) NOT NULL,
+  `mode` VARCHAR(8) NOT NULL DEFAULT 'dynamic',
+  `rules_version` INT NOT NULL DEFAULT 0,
+  `reasons` TEXT NULL,
+  `details` TEXT NULL,
+  `audited_at` DATETIME NOT NULL,
+  CONSTRAINT `fk_license_audits_game_id` FOREIGN KEY (`game_id`) REFERENCES `games` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_license_audits_license_id` FOREIGN KEY (`license_id`) REFERENCES `game_licenses` (`id`) ON DELETE SET NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_license_audits_game_id_audited_at` (`game_id`, `audited_at`),
+  KEY `idx_license_audits_verdict` (`verdict`),
+  KEY `idx_license_audits_rules_version` (`rules_version`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `takedowns` (
