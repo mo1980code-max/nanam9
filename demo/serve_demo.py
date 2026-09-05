@@ -25,12 +25,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 from prove_runtime import (  # noqa: E402  (same SQL as the real PHP classes)
-    HOSTILE_URLS, Auditor, Board, Feed, Pack, Policy, bucket_key, guard_inspect,
+    HOSTILE_URLS, MIGRATOR_CURRENT, Auditor, Board, Exporter, Feed, Install, Pack, Policy,
+    bucket_key, guard_inspect,
 )
 
 PORT = int(__import__("os").environ.get("PORT", "8090"))
 NOW = "2026-09-05 12:00:00"
-DOCS = ["LEADERBOARD", "UPGRADING", "CA-COMPAT", "LICENSING", "PROVIDERS", "README"]
+DOCS = ["LEADERBOARD", "UPGRADING", "CA-COMPAT", "LICENSING", "PROVIDERS", "INSTALLING", "README"]
 
 GAMES = [
     (1, "neon-worm", "نيون وورم", "casual"),
@@ -97,6 +98,8 @@ def build_db() -> sqlite3.Connection:
     board = Board(conn)
     for gid, score, alias, at in SEED:
         board.submit(gid, score, alias, at)
+    # What Migrator leaves behind after a successful run; the installer's self-check reads it.
+    conn.execute("INSERT INTO schema_version (version, applied_at) VALUES (?, ?)", (MIGRATOR_CURRENT, NOW))
     for gid, lic in LICENSES:
         cols = ", ".join(lic)
         marks = ", ".join("?" for _ in lic)
@@ -313,6 +316,63 @@ class Handler(BaseHTTPRequestHandler):
                           "license_type": r["license_type"], "reasons": r["reasons"],
                           "warnings": r["warnings"]} for r in report["rows"]],
             })
+            return
+
+        if u.path == "/api/export":
+            # Runs the same exporter mirror the runtime proof runs, against this demo's catalogue.
+            dist = tempfile.mkdtemp(prefix="demo-dist-")
+            try:
+                with DB_LOCK:
+                    report = Exporter(self.auditor, dist, str(ROOT / "db" / "license_rules.json")).export()
+                on_disk = sorted(str(f.relative_to(dist)) for f in Path(dist).rglob("*") if f.is_file())
+                pages = {f.parent.name: (dist / f).read_text(encoding="utf-8")
+                         for f in Path(dist, "game").glob("*/index.html")} if Path(dist, "game").is_dir() else {}
+                refused_slugs = [r["slug"] for r in report["refusals"]]
+                self._json({
+                    "ok": report["ok"], "exported": report["exported"], "blocked": report["blocked"],
+                    "bytes": report["bytes"], "rules_version": report["rules_version"],
+                    "rules_file_sha256": report["rules_file_sha256"],
+                    "note": "a refused game produces no file — that is the whole point of the exporter",
+                    "files_on_disk": on_disk,
+                    "refused_produced_no_directory": refused_slugs,
+                    "refusals": report["refusals"],
+                    "sample_page": (sorted(pages.values())[0] if pages else None),
+                })
+            finally:
+                import shutil
+                shutil.rmtree(dist, ignore_errors=True)
+            return
+
+        if u.path == "/api/install":
+            # Runs the installer mirror's steps against a throwaway root and this demo's database.
+            root = tempfile.mkdtemp(prefix="demo-install-")
+            try:
+                Path(root, "config").mkdir()
+                Path(root, "db").mkdir()
+                import shutil
+                shutil.copy(ROOT / "config" / "config.sample.php", Path(root, "config", "config.sample.php"))
+                shutil.copy(ROOT / "db" / "schema.json", Path(root, "db", "schema.json"))
+                installer = Install(conn=self.conn, root=root)
+                steps = [{"name": "environment", "detail": installer.check_environment(), "ok": True}]
+                steps.append({"name": "config", "detail": installer.write_config(), "ok": True})
+                secret = installer.load_config()
+                steps.append({"name": "secret", "ok": True,
+                              "detail": f"{len(secret)} hex chars · not the shipped placeholder"})
+                with DB_LOCK:
+                    steps.append({"name": "seed", "detail": installer.seed(), "ok": True})
+                    steps.append({"name": "self_check", "detail": installer.self_check(), "ok": True})
+                bad = Install(conn=self.conn, root=root, php_version="8.0.30")
+                try:
+                    bad.check_environment()
+                    refused = "NOT refused"
+                except RuntimeError as exc:
+                    refused = str(exc)
+                self._json({"ok": True, "steps": steps,
+                            "unsupported_php_is_refused": refused,
+                            "note": "each step is reported; the run stops at the first failure"})
+            finally:
+                import shutil
+                shutil.rmtree(root, ignore_errors=True)
             return
 
         if u.path == "/api/pack":

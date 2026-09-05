@@ -20,6 +20,8 @@ What it checks (each was proven non-vacuous by injecting a bug and watching exit
   6. migrations        — db/migrations.json parses; the highest version equals
                          Migrator::CURRENT; every step has both dialect lists.
   7. JS bridge         — ca-compat.js only references the eight documented leaderboard types.
+ 10. install + export  — the installer's SQL is the SQL the runtime proof executes, a refused game
+                         produces no exported file, and every SELECT names a real column.
   9. providers         — the reserved-range lists, the required-field lists and the feed SQL in
                          src/Providers/ are byte-identical to what tools/prove_runtime.py attacks,
                          the cloud-metadata and loopback ranges are present, and no feed can reach
@@ -358,7 +360,9 @@ def main() -> int:
             table, cols_raw = m.group(1), m.group(2)
             if table not in tables:
                 continue
-            cols = [c.strip(" `\"") for c in cols_raw.split(",")]
+            # \t\n\r must be stripped too: a legal INSERT whose column list wraps onto a second
+            # line produced a "column" named '\n        xp' and failed against the schema.
+            cols = [c.strip(" \t\n\r`\"") for c in cols_raw.split(",")]
             unknown = [c for c in cols if c and c not in tables[table]["columns"]]
             check(f"{path.name}: INSERT into {table} columns exist", not unknown, str(unknown))
         all_columns = {c for t in tables.values() for c in t["columns"]}
@@ -556,6 +560,131 @@ def main() -> int:
         check("every pack entry names an upstream repo",
               all(str(e.get("upstream_repo") or "").startswith(("http://", "https://"))
                   for e in pack_doc.get("entries", []) if e.get("upstream_repo")))
+
+
+    # -- 10: install + export --------------------------------------------------------------
+    proof_src = (ROOT / "tools" / "prove_runtime.py").read_text(encoding="utf-8")
+    MIGRATOR_CURRENT = re.search(r"public const CURRENT = (\d+);",
+                                 raws.get(SRC / "Db" / "Migrator.php", ""))
+    MIGRATOR_CURRENT = MIGRATOR_CURRENT.group(1) if MIGRATOR_CURRENT else "?"
+    print("\n  10 · installer and static export")
+    installer = raws.get(SRC / "Install" / "Installer.php", "")
+    exporter = raws.get(SRC / "Export" / "StaticExporter.php", "")
+    admin = raws.get(SRC / "Admin" / "AdminController.php", "")
+    check("src/Install/Installer.php exists", installer != "")
+    check("src/Export/StaticExporter.php exists", exporter != "")
+    check("src/Admin/AdminController.php exists", admin != "")
+
+    # SELECT columns: the same rule the INSERT gate already enforces, extended to reads. A ledger
+    # query naming a column that does not exist only fails in production, at 3am, on a buyer's box.
+    def php_literals(text: str) -> list[str]:
+        found = re.findall(r"'((?:[^'\\]|\\.)*)'", text) + re.findall(r'"((?:[^"\\]|\\.)*)"', text)
+        return [squash(f) for f in found]
+
+    def split_top(part: str) -> list[str]:
+        out, depth, cur = [], 0, ""
+        for c in part:
+            if c in "([":
+                depth += 1
+            elif c in ")]":
+                depth -= 1
+            if c == "," and depth == 0:
+                out.append(cur)
+                cur = ""
+                continue
+            cur += c
+        if cur.strip():
+            out.append(cur)
+        return out
+
+    QUOTE = "[`\"']"          # a column may be quoted with a backtick, a double or a single quote
+    select_bad: list[str] = []
+    select_seen = 0
+    for path in files:
+        for lit in php_literals(raws[path]):
+            m = re.match("SELECT\s+(.+?)\s+FROM\s+" + QUOTE + "?(\w+)" + QUOTE + "?", lit, re.I)
+            if not m:
+                continue
+            table = m.group(2)
+            if table not in tables or re.search(r"\bJOIN\b", lit, re.I):
+                continue
+            for raw_col in split_top(m.group(1)):
+                col = raw_col.strip()
+                if not col or "(" in col or "*" in col or "?" in col:
+                    continue          # expressions and wildcards are not column names
+                col = re.split(r"\s+AS\s+", col, flags=re.I)[0].strip()
+                col = col.split(".")[-1].strip(" `\"")
+                if col.upper() == "DISTINCT" or not re.match(r"^\w+$", col):
+                    continue
+                select_seen += 1
+                if col not in tables[table]["columns"]:
+                    select_bad.append(f"{path.name}: {table}.{col}")
+    check(f"every SELECT column names a real column ({select_seen} read)", not select_bad, str(select_bad))
+
+    # The two installer statements the runtime proof executes verbatim. If either side drifts the
+    # proof would be pinning SQL the product no longer runs.
+    def php_const(text: str, name: str) -> str:
+        m = re.search(r"const\s+" + name + r"\s*=\s*'((?:[^'\\]|\\.)*)'", text, re.S)
+        return squash(m.group(1)) if m else ""
+
+    sql_setting = php_const(installer, "SQL_SETTING")
+    sql_admin = php_const(installer, "SQL_ADMIN")
+    check("Installer::SQL_SETTING is non-empty", sql_setting != "")
+    check("Installer::SQL_ADMIN is non-empty", sql_admin != "")
+    check("the proof runs Installer::SQL_SETTING verbatim",
+          sql_setting in squash(proof_src), "not found in prove_runtime.py")
+    check("the proof runs Installer::SQL_ADMIN verbatim",
+          sql_admin in squash(proof_src), "not found in prove_runtime.py")
+    check("re-seeding must not overwrite an operator's edits (DO NOTHING, not DO UPDATE)",
+          "ON CONFLICT(key_name) DO NOTHING" in sql_setting and "DO UPDATE" not in sql_setting, sql_setting[-60:])
+
+    check("the installer refuses a secret shorter than 32 bytes",
+          "strlen((string) ($config['secret'] ?? '')) < 32" in installer)
+    check("the installer replaces the shipped placeholder secret",
+          "$config['secret'] = $this->randomSecret();" in installer
+          and "random_bytes(32)" in installer)
+    check("the installer will not continue on an unsupported PHP",
+          "version_compare(PHP_VERSION, self::MIN_PHP, '<')" in installer)
+    check("the installer checks the schema against db/schema.json",
+          "db/schema.json" in installer and "array_diff($expected, $present)" in installer)
+    check("Migrator::CURRENT matches the proof's MIGRATOR_CURRENT",
+          f"MIGRATOR_CURRENT = {MIGRATOR_CURRENT}\n" in proof_src
+          and f"public const CURRENT = {MIGRATOR_CURRENT};" in raws.get(SRC / "Db" / "Migrator.php", ""))
+
+    # The export rule that matters is negative: a refused game must produce no file. Structurally
+    # that means the not-exportable branch contains no write at all.
+    branch = php_method(strip_php(exporter, keep_strings=True)[0], "export")
+    refused_branch = ""
+    bm = re.search(r"if\s*\(\(bool\)\s*\$game\['exportable'\]\s*===\s*false\)\s*\{", branch)
+    if bm:
+        depth, i = 0, bm.end() - 1
+        while i < len(branch):
+            if branch[i] == "{":
+                depth += 1
+            elif branch[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    refused_branch = branch[bm.end():i]
+                    break
+            i += 1
+    check("StaticExporter::export branches on exportable === false", refused_branch != "")
+    check("the refused branch writes nothing",
+          refused_branch != "" and "file_put_contents" not in refused_branch, refused_branch[:80])
+    check("the refused branch records the reason instead",
+          "reasons" in refused_branch and "continue" in refused_branch)
+    # Pinned as the exact comparison, not as "mentions rules_sha256": an `if (false)` in front of
+    # the throw satisfies a keyword check while deleting the guard entirely. The mutation suite
+    # injects exactly that, and the keyword version of this check let it through.
+    check("the exporter verifies the shipped policy is the audited policy",
+          "if (\\hash('sha256', (string) \\json_encode($decoded)) !== (string) $manifest['rules_sha256']) {"
+          in exporter and "refusing to export" in exporter)
+    check("the exporter records the hash of the bytes it ships",
+          "$manifest['rules_file_sha256'] = \hash('sha256', $rulesBytes);" in exporter)
+    check("the exporter writes the attribution into each page",
+          "attribution" in exporter and 'class="attribution"' in exporter)
+    check("the admin panel reads verdicts from the auditor, never re-decides them",
+          "->evaluate(" not in admin and "->decide(" not in admin and "new LicensePolicy" not in admin)
+    check("the admin ledger reads the audit table", "FROM license_audits" in admin)
 
 
     print()

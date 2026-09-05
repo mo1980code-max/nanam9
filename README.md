@@ -1,18 +1,21 @@
 # Nawras Arcade — محرّك أركيد عربي/إنجليزي يُباع حصرياً
 
-> **الحالة اليوم**: النواة + **طبقة الترخيص** + **المزوّدات** اكتملت — مخطط مصدر واحد بلهجتين
-> متطابقتين (أعمدة **وقيود**)، آلية ترحيلات تُرقّي النسخ المثبّتة، لوحة صدارة بـ**8 أنماط
-> زمنية** بعقد متوافق مع CloudArcade، جسر `ca_api` نظيف، **بوابة ترخيص** لا تخدم لعبة ولا
-> تصدّرها ما لم يقل صفٌّ في `game_licenses` لماذا يجوز ذلك، و**حارس SSRF** يرفض أي جلب داخلي
-> بكل ترميزاته. كل ذلك مثبت ببوابات أُثبت عدم فراغها بحقن عيوب متعمدة.
+> **الحالة اليوم**: النواة + **طبقة الترخيص** + **المزوّدات** + **التنصيب والتصدير** + **التغليف**
+> اكتملت — مخطط مصدر واحد بلهجتين متطابقتين (أعمدة **وقيود**)، آلية ترحيلات تُرقّي النسخ
+> المثبّتة، لوحة صدارة بـ**8 أنماط زمنية** بعقد متوافق مع CloudArcade، جسر `ca_api` نظيف،
+> **بوابة ترخيص** لا تخدم لعبة ولا تصدّرها ما لم يقل صفٌّ في `game_licenses` لماذا يجوز ذلك،
+> **حارس SSRF** يرفض أي جلب داخلي بكل ترميزاته، **مثبّت** يرفض سرّ العيّنة ويُثبت مخططه بنفسه،
+> و**مصدّر ساكن** لا يُنشئ ملفاً للعبة مرفوضة. كل ذلك مثبت ببوابات أُثبت عدم فراغها بحقن عيوب
+> متعمدة (17 عيباً في الدفعة الأخيرة وحدها).
 
 ## البوابات (كلها خضراء)
 
 ```
 $ npm test
   ✓ ca-compat.js يمر على node --check
-  ✓ verify_php.py · 77 فحصاً بنيوياً (أُثبت أنها تلتقط العيوب بحقنها فعلياً)
-  ✓ prove_runtime.py · 104 فحوص: DDL + ترحيلان حقيقيان + اللوحات الثمانية + بوابة الترخيص + الحارس
+  ✓ verify_php.py · 113 فحصاً بنيوياً (أُثبت أنها تلتقط العيوب بحقنها فعلياً)
+  ✓ prove_runtime.py · 148 فحصاً: DDL + ترحيلان حقيقيان + اللوحات الثمانية + بوابة الترخيص
+    + الحارس + التصدير الساكن + المثبّت
   ✓ gen_schema_sql.py --verify · اللهجتان متطابقتان العمود-بعمود · 77 قيداً متطابقاً
   ✓ gen_license_rules.py --verify · سياسة صالحة بنيوياً · النسخة الساكنة مطابقة للمصدر
   ✓ JSON صالح (schema, migrations, license_rules, oss_pack)
@@ -31,10 +34,15 @@ src/Db/{Connection,Migrator}.php
 src/Gamify/{Buckets,Leaderboard,Signer}.php
 src/Licensing/{LicensePolicy,LicenseAuditor}.php   ← السياسة ثم البوابة ثم السجل
 src/Providers/{UrlGuard,OssPack,FeedConverter}.php ← SSRF ثم الحزمة ثم التغذية
+src/Install/Installer.php            ← ست خطوات، تتوقف عند أول فشل
+src/Export/StaticExporter.php        ← لعبة مرفوضة = لا ملف
+src/Admin/AdminController.php        ← لوحة عمليات الترخيص (JSON فقط)
 src/Http/Response.php · src/Front/SiteController.php · src/Routes.php · src/App.php
+public/index.php        ← المتحكم الأمامي، نقطة PHP الوحيدة داخل docroot
+bin/{install,export}.php · Dockerfile · composer.json · .github/workflows/ci.yml
 public/assets/ca-compat.js   ← جسر ألعاب ca_api (clean-room)
 tools/{gen_schema_sql,gen_license_rules,verify_php,prove_runtime,bootstrap_schema}.py
-docs/{LEADERBOARD,UPGRADING,CA-COMPAT,LICENSING,PROVIDERS}.md
+docs/{LEADERBOARD,UPGRADING,CA-COMPAT,LICENSING,PROVIDERS,INSTALLING}.md
 ```
 
 ## API العام
@@ -63,14 +71,28 @@ POST /api/play         {game}                                   # 451 إن لم 
 الحزمة بنفس سياسة الترخيص في وضع التصدير، فلا تُشحَن رخصة تمنع إعادة التوزيع. انظر
 `docs/PROVIDERS.md`.
 
-## الطريق إلى المنتج القابل للبيع (الباقي على الدفعات القادمة)
+## التنصيب والتصدير في سطرين
+
+`php bin/install.php` يكتب الإعداد **بسرّ عشوائي جديد** (سرّ العيّنة المُرسل لا يُثبَّت أبداً،
+وإلا شاركت كل النسخ مفتاح التوقيع نفسه)، يُرحّل المخطط، يزرع الإعدادات وحساب المدير، ثم
+**يُثبت نفسه**: إصدار المخطط يجب أن يساوي `Migrator::CURRENT` وكل جدول في `db/schema.json`
+موجود فعلاً. و`php bin/export.php dist` يكتب الحزمة الساكنة بعد سؤال المدقّق في وضع التصدير —
+واللعبة المرفوضة **لا يُنشأ لها ملف**: لا صفحة، ولا صفحة خلف علم، والسبب يبقى في
+`license-manifest.json` مع بصمتَي SHA-256 تسمحان لأي مضيف ساكن بأن يعيد فحص نفسه.
+انظر `docs/INSTALLING.md` (فيه الأسعار: Standard $49 / Extended $149 / Buyout).
+
+## الطريق إلى المنتج القابل للبيع
 
 1. ~~النواة: مخطط + ترحيلات + لوحة 8 أنماط + جسر~~
 2. ~~طبقة الترخيص: `game_licenses` ledger + `LicenseAuditor` الصارم + قواعد موحدة PHP/Static~~ ← **هذه الدفعة**
 3. ~~المزوّدات: تنسيق OSS pack + `OssPack` المدقّق + `FeedConverter` + `UrlGuard` بـSSRF-hardening~~ ← **هذه الدفعة**
    (الباقي هنا إدخال بيانات: انتقاء الـ50 لعبة الحقيقية بأدلتها المثبتة — التنسيق والمدقّق جاهزان)
-4. الأدمن + المثبّت + المصدرية الثنائية (PHP ديناميكي + تصدير ساكن)
-5. التغليف التجاري: Docker/composer/CI + الأسعار (Standard $49 / Extended $149 / Buyout)
+4. ~~الأدمن + المثبّت + المصدرية الثنائية (PHP ديناميكي + تصدير ساكن)~~ ← **هذه الدفعة**
+5. ~~التغليف التجاري: Docker/composer/CI + الأسعار (Standard $49 / Extended $149 / Buyout)~~ ← **هذه الدفعة**
 
-انظر `docs/LEADERBOARD.md` و`docs/UPGRADING.md` و`docs/CA-COMPAT.md` و`docs/LICENSING.md` و`docs/PROVIDERS.md`.
+الباقي بيانات وتشغيل، لا كود: انتقاء الألعاب الحقيقية بأدلتها المثبتة، وتشغيل `docker build`
+وCI مرة على آلة فيها Docker وPHP (كُتبا here بلا daemon ولا مترجم PHP، فهما مقروءان لا مُختبَران).
+
+انظر `docs/LEADERBOARD.md` و`docs/UPGRADING.md` و`docs/CA-COMPAT.md` و`docs/LICENSING.md`
+و`docs/PROVIDERS.md` و`docs/INSTALLING.md`.
 الترخيص: **proprietary** — بيع حصري فقط، لا MIT.

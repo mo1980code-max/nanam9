@@ -89,6 +89,14 @@
   <h2 style="margin-top:2.5rem">استيراد مزوّد — <code>GET /api/feed</code></h2>
   <pre id="feed">…</pre>
 
+  <h2 style="margin-top:2.5rem">التصدير الثابت — <code>GET /api/export</code></h2>
+  <p class="muted">لعبة يرفضها المدقّق في وضع التصدير لا يُنشأ لها ملف إطلاقاً: لا صفحة، ولا صفحة خلف علم. السبب يبقى في البيان.</p>
+  <pre id="export">…</pre>
+
+  <h2 style="margin-top:2.5rem">المثبّت — <code>GET /api/install</code></h2>
+  <p class="muted">كل خطوة تُبلّغ عن نفسها، والتشغيل يتوقّف عند أول فشل. السرّ المُرسل في العيّنة لا يُقبَل أبداً.</p>
+  <pre id="install">…</pre>
+
   <h2 style="margin-top:2.5rem">تدقيق الفهرس كاملاً — <code>GET /api/audit</code></h2>
   <pre id="audit">…يُدقَّق…</pre>
 
@@ -220,6 +228,21 @@ fetch('/api/feed').then(r => r.json()).then(d => {
     'آخر عمليات provider_runs:\n' +
     d.recent_runs.map(r => '   ' + r.status.padEnd(8) + ' seen=' + r.seen + ' new=' + r.new + ' rejected=' + r.rejected).join('\n');
 });
+
+fetch('/api/export').then(r => r.json()).then(d => {
+  const l = [`مُصدَّر ${d.exported} · مرفوض ${d.blocked} · ${d.bytes} بايت · قواعد v${d.rules_version}`,
+             'sha256 للسياسة المُصدَّرة ' + d.rules_file_sha256, '', 'الملفات على القرص:'];
+  d.files_on_disk.forEach(f => l.push('  ' + f));
+  l.push('', 'لم يُنشأ مجلد لـ: ' + d.refused_produced_no_directory.join(', '), '');
+  d.refusals.forEach(r => l.push(`  ✗ ${r.slug} — ${r.verdict} (${r.reasons.join(', ')})`));
+  document.getElementById('export').textContent = l.join('\n');
+}).catch(e => document.getElementById('export').textContent = 'خطأ: ' + e);
+
+fetch('/api/install').then(r => r.json()).then(d => {
+  const l = d.steps.map(s => `  ${s.ok ? '✓' : '✗'} ${s.name.padEnd(12)} ${s.detail}`);
+  l.push('', 'PHP غير مدعوم ← ' + d.unsupported_php_is_refused);
+  document.getElementById('install').textContent = l.join('\n');
+}).catch(e => document.getElementById('install').textContent = 'خطأ: ' + e);
 
 fetch('/api/gates').then(r => r.json()).then(d => document.getElementById('out').textContent = d.output);
 fetch('/api/audit').then(r => r.json()).then(d => {

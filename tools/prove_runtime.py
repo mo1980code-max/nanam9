@@ -32,10 +32,14 @@ Exit 0 proves everything; any deviation exits 1 with the failing assertion.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import shutil
 import sqlite3
 import sys
+import tempfile
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -356,6 +360,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 SQL_MARK = 'UPDATE game_licenses SET audited_at = ?, audit_verdict = ? WHERE id = ?'
 
 TODAY = "2026-09-05"
+# Mirror of Migrator::CURRENT. tools/verify_php.py fails the build if the PHP constant disagrees,
+# so this literal cannot drift from the product it is judging.
+MIGRATOR_CURRENT = 5
 
 
 class Policy:
@@ -573,6 +580,22 @@ class Auditor:
         return {"audited": len(out), "ok": counts["ok"], "warn": counts["warn"],
                 "blocked": counts["blocked"], "rows": out}
 
+    def manifest(self, at: str = TODAY + " 12:00:00") -> dict:
+        """Twin of LicenseAuditor::manifest() — what the static bundle is allowed to contain."""
+        audit = self.audit_published("export", {"commercial_install": True}, at)
+        games = [{
+            "slug": str(row["game_slug"]), "verdict": str(row["verdict"]),
+            "license_type": row["license_type"], "exportable": bool(row["ok"]),
+            "attribution": row["attribution"], "reasons": row["reasons"], "warnings": row["warnings"],
+        } for row in audit["rows"]]
+        return {
+            "rules_version": self.policy.version(),
+            "rules_sha256": hashlib.sha256(php_json_encode(self.policy.doc).encode("utf-8")).hexdigest(),
+            "mode": "export", "generated_at": at,
+            "counts": {"ok": audit["ok"], "warn": audit["warn"], "blocked": audit["blocked"]},
+            "games": games,
+        }
+
 
 def apply_step(conn: sqlite3.Connection, steps: list[str]) -> tuple[int, int]:
     """Runs one migration step the way Nawras\Db\Migrator does: tolerating 'already applied' only."""
@@ -650,6 +673,16 @@ CREATE INDEX "idx_game_licenses_license_type" ON "game_licenses" ("license_type"
 CREATE INDEX "idx_game_licenses_expires_at" ON "game_licenses" ("expires_at");
 """
 
+def php_json_encode(obj) -> str:
+    """Python stand-in for PHP json_encode() with default flags: compact separators, unicode escapes for non-ASCII, and "/" escaped. LicenseAuditor::manifest() hashes the policy this way
+    (sha256 of the re-encoded decode), so the mirror needs the same shape to talk about it.
+
+    Not verified against a real PHP runtime — there is no php binary here. That does not weaken
+    the exporter: in production the comparison is PHP-to-PHP. The mirror uses this function only
+    to prove the copied policy file is content-identical to the one the audit ran against."""
+    return json.dumps(obj, ensure_ascii=True, separators=(",", ":")).replace("/", "\\/")
+
+
 SHA40 = "9f2c1ab7d4e80563f21b0c9a7e6d5c4b3a291807"
 SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 ATTR = '<a href="https://example.org/work">Work</a> by Sara, CC BY 4.0'
@@ -715,6 +748,30 @@ CATALOGUE = [
                                    attribution_required=1, attribution_html=ATTR)]),
     ("mystery-type", "own", [_lic(license_type="beerware", license_ref="?")]),
 ]
+
+
+def seed_catalogue(conn: sqlite3.Connection) -> dict[str, int]:
+    """Inserts CATALOGUE into a schema-built database. Shared by proofs D and F so the exporter
+    is judged against exactly the rows the licence gate was judged against."""
+    ids: dict[str, int] = {}
+    for gid, (slug, provider, licenses) in enumerate(CATALOGUE, start=1):
+        conn.execute(
+            "INSERT INTO games (id, slug, title_ar, title_en, provider, status, created_at, updated_at) "
+            "VALUES (?,?,?, ?,?, 'published','2026-09-01 00:00:00','2026-09-01 00:00:00')",
+            (gid, slug, slug, slug, provider))
+        ids[slug] = gid
+        for lic in licenses:
+            conn.execute(
+                "INSERT INTO game_licenses (game_id, provider, external_id, license_type, license_ref,"
+                " upstream_repo, commit_sha, license_file, license_sha256, proof_url, invoice_ref,"
+                " allow_origins, attribution_required, attribution_html, captured_at, expires_at, status,"
+                " created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'2026-09-01 00:00:00','2026-09-01 00:00:00')",
+                (gid, lic["provider"], lic["external_id"], lic["license_type"], lic["license_ref"],
+                 lic["upstream_repo"], lic["commit_sha"], lic["license_file"], lic["license_sha256"],
+                 lic["proof_url"], lic["invoice_ref"], lic["allow_origins"], lic["attribution_required"],
+                 lic["attribution_html"], lic["captured_at"], lic["expires_at"], lic["status"]))
+    return ids
 
 
 def proof_d() -> None:
@@ -791,22 +848,7 @@ def proof_d() -> None:
     check("re-running migration 5 is a no-op", state() == before, f"{before} vs {state()}")
 
     # --- D2: the catalogue, then the decision table
-    for gid, (slug, provider, licenses) in enumerate(CATALOGUE, start=1):
-        conn.execute(
-            "INSERT INTO games (id, slug, title_ar, title_en, provider, status, created_at, updated_at) "
-            "VALUES (?,?,?, ?,?, 'published','2026-09-01 00:00:00','2026-09-01 00:00:00')",
-            (gid, slug, slug, slug, provider))
-        for lic in licenses:
-            conn.execute(
-                "INSERT INTO game_licenses (game_id, provider, external_id, license_type, license_ref,"
-                " upstream_repo, commit_sha, license_file, license_sha256, proof_url, invoice_ref,"
-                " allow_origins, attribution_required, attribution_html, captured_at, expires_at, status,"
-                " created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'2026-09-01 00:00:00','2026-09-01 00:00:00')",
-                (gid, lic["provider"], lic["external_id"], lic["license_type"], lic["license_ref"],
-                 lic["upstream_repo"], lic["commit_sha"], lic["license_file"], lic["license_sha256"],
-                 lic["proof_url"], lic["invoice_ref"], lic["allow_origins"], lic["attribution_required"],
-                 lic["attribution_html"], lic["captured_at"], lic["expires_at"], lic["status"]))
+    seed_catalogue(conn)
 
     policy = Policy(json.loads((ROOT / "db" / "license_rules.json").read_text(encoding="utf-8")))
     auditor = Auditor(conn, policy)
@@ -1245,19 +1287,394 @@ def proof_e() -> None:
 
 
 
+# ------------------------------------------- F (static export + installer)
+# Mirrors of Nawras\Export\StaticExporter and Nawras\Install\Installer. The property that matters
+# is negative: a game the auditor refuses in export mode must produce NO file. Every check below
+# was written after injecting the opposite behaviour and watching this proof go red.
+
+class Exporter:
+    """Python mirror of StaticExporter: same layout, same refusal rule, same two hashes."""
+
+    def __init__(self, auditor: Auditor, dist: str, rules_source: str, site_name: str = "Nawras Arcade"):
+        self.auditor = auditor
+        self.dist = dist
+        self.rules_source = rules_source
+        self.site_name = site_name
+
+    @staticmethod
+    def page(slug: str, game: dict, site_name: str) -> str:
+        attribution = "" if game.get("attribution") is None else str(game["attribution"])
+        ltype = str(game.get("license_type") or "")
+        return (
+            '<!doctype html>\n<html lang="ar" dir="rtl">\n'
+            f'<head><meta charset="utf-8"><title>{slug} \u00b7 {site_name}</title></head>\n'
+            f'<body data-game="{slug}" data-license="{ltype}">\n<h1>{slug}</h1>\n'
+            f'<div id="game" data-src="{slug}.html"></div>\n'
+            f'<footer class="attribution" lang="en" dir="ltr">{attribution}</footer>\n'
+            '<script>/* rules: assets/license-rules.json \u00b7 hash checked at build time */</script>\n'
+            '</body></html>\n'
+        )
+
+    def _mkdir(self, path: str) -> None:
+        Path(path).mkdir(parents=True, exist_ok=True)
+
+    def export(self) -> dict:
+        manifest = self.auditor.manifest()
+        rules_bytes = Path(self.rules_source).read_bytes()
+        try:
+            decoded = json.loads(rules_bytes.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Licence policy is not valid JSON ({self.rules_source}).") from exc
+        if not isinstance(decoded, dict):
+            raise RuntimeError(f"Licence policy is not valid JSON ({self.rules_source}).")
+        # Content identity, exactly as the PHP does it: the policy the auditor judged with must be
+        # the policy being shipped, compared on the re-encoded decode so whitespace cannot hide it.
+        if hashlib.sha256(php_json_encode(decoded).encode("utf-8")).hexdigest() != manifest["rules_sha256"]:
+            raise RuntimeError("The policy file on disk is not the policy the audit ran against; refusing to export.")
+
+        self._mkdir(self.dist)
+        self._mkdir(self.dist + "/assets")
+        files, refusals = [], []
+        total = exported = 0
+        for game in manifest["games"]:
+            slug = str(game["slug"])
+            if game["exportable"] is False:
+                refusals.append({"slug": slug, "verdict": game["verdict"],
+                                 "license_type": game["license_type"], "reasons": game["reasons"]})
+                continue
+            html = self.page(slug, game, self.site_name)
+            path = f"{self.dist}/game/{slug}/index.html"
+            self._mkdir(str(Path(path).parent))
+            Path(path).write_text(html, encoding="utf-8")
+            files.append(f"/game/{slug}/index.html")
+            total += len(html.encode("utf-8"))
+            exported += 1
+
+        rules_target = self.dist + "/assets/license-rules.json"
+        Path(rules_target).write_bytes(rules_bytes)
+        files.append("/assets/license-rules.json")
+        total += len(rules_bytes)
+
+        manifest["rules_file_sha256"] = hashlib.sha256(rules_bytes).hexdigest()
+        manifest["site"] = self.site_name
+        manifest["exported"] = exported
+        manifest["refusals"] = refusals
+        blob = json.dumps(manifest, ensure_ascii=False, indent=2)
+        Path(self.dist + "/license-manifest.json").write_text(blob, encoding="utf-8")
+        files.append("/license-manifest.json")
+        total += len(blob.encode("utf-8"))
+
+        names = [str(g["slug"]) for g in manifest["games"] if g["exportable"] is True]
+        index = ("<!doctype html>\n<html lang=\"ar\" dir=\"rtl\"><head><meta charset=\"utf-8\">"
+                 f"<title>{self.site_name}</title></head>\n<body>\n<h1>{self.site_name}</h1>\n<ul>\n"
+                 + "".join(f'<li><a href="/game/{n}/">{n}</a></li>\n' for n in names)
+                 + "</ul>\n</body></html>\n")
+        Path(self.dist + "/index.html").write_text(index, encoding="utf-8")
+        files.append("/index.html")
+        total += len(index.encode("utf-8"))
+
+        return {"ok": exported > 0, "exported": exported, "blocked": len(refusals), "bytes": total,
+                "rules_file_sha256": manifest["rules_file_sha256"],
+                "rules_version": int(manifest["rules_version"]), "files": files, "refusals": refusals}
+
+
+# One line each, verbatim from Installer.php: tools/verify_php.py compares these literals against
+# the PHP constants and a string split across two adjacent lines never matches.
+INSTALL_SQL_SETTING = "INSERT INTO settings (key_name, value_type, value_text, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key_name) DO NOTHING"
+INSTALL_SQL_ADMIN = "INSERT INTO users (username, email, password_hash, display_name, role, locale, xp, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?) ON CONFLICT(username) DO NOTHING"
+INSTALL_DEFAULT_SETTINGS = [("site_name_ar", "string", "\u0623\u0631\u0643\u064a\u062f \u0646\u0648\u0631\u0633"),
+                            ("site_name_en", "string", "Nawras Arcade"), ("locale_default", "string", "ar"),
+                            ("commercial", "bool", "1"), ("leaderboard_default_type", "string", "top-week")]
+
+
+class Install:
+    """Python mirror of Installer: same step order, same refusals, same SQL."""
+
+    MIN_PHP = "8.1.0"
+    REQUIRED_EXTENSIONS = ["pdo", "json", "mbstring", "hash"]
+
+    def __init__(self, conn: sqlite3.Connection | None = None, root: str | None = None,
+                 php_version: str = "8.3.0", extensions: list[str] | None = None,
+                 drivers: list[str] | None = None, options: dict | None = None):
+        self.conn = conn
+        self.root = root or str(ROOT)
+        self.php_version = php_version
+        self.extensions = list(self.REQUIRED_EXTENSIONS if extensions is None else extensions)
+        self.drivers = ["sqlite"] if drivers is None else drivers
+        self.options = dict(options or {})
+
+    def check_environment(self) -> str:
+        def newer(a: str, b: str) -> bool:
+            return [int(x) for x in a.split(".")] >= [int(x) for x in b.split(".")]
+        if not newer(self.php_version, self.MIN_PHP):
+            raise RuntimeError(f"PHP {self.MIN_PHP}+ required, found {self.php_version}")
+        missing = [e for e in self.REQUIRED_EXTENSIONS if e not in self.extensions]
+        if missing:
+            raise RuntimeError("Missing PHP extensions: " + ", ".join(missing))
+        if "mysql" not in self.drivers and "sqlite" not in self.drivers:
+            raise RuntimeError("PDO needs pdo_mysql or pdo_sqlite; found: " + ", ".join(self.drivers))
+        var = self.root + "/var"
+        Path(var).mkdir(parents=True, exist_ok=True)
+        if not os.access(var, os.W_OK):
+            raise RuntimeError(f"{var} is not writable by the web server user")
+        return "PHP " + self.php_version + " \u00b7 pdo drivers: " + ", ".join(self.drivers)
+
+    def write_config(self) -> str:
+        target = self.root + "/config/config.php"
+        sample = self.root + "/config/config.sample.php"
+        if Path(target).is_file() and self.options.get("force") is not True:
+            return "config/config.php already exists \u2014 left untouched"
+        if not Path(sample).is_file():
+            raise RuntimeError(f"config/config.sample.php is missing from this package ({sample})")
+        text = Path(sample).read_text(encoding="utf-8")
+        secret = hashlib.sha256(os.urandom(32)).hexdigest()
+        # The shipped sample carries a placeholder on purpose; installing it verbatim would give
+        # every buyer the same signing key.
+        if "change-me-to-32-plus-random-bytes" not in text:
+            raise RuntimeError("the sample config no longer carries the placeholder secret this installer replaces")
+        body = text.replace("change-me-to-32-plus-random-bytes", secret)
+        Path(target).write_text(body, encoding="utf-8")
+        return "config/config.php written with a fresh 32-byte secret"
+
+    def load_config(self) -> str:
+        file = self.root + "/config/config.php"
+        if not Path(file).is_file():
+            raise RuntimeError(f"Config was not written ({file})")
+        m = re.search(r"'secret'\s*=>\s*'([^']*)'", Path(file).read_text(encoding="utf-8"))
+        secret = m.group(1) if m else ""
+        if len(secret) < 32:
+            raise RuntimeError("Refusing to continue: the configured secret is shorter than 32 bytes")
+        return secret
+
+    def seed(self, admin_user: str = "admin", admin_password: str = "a-fresh-password") -> str:
+        if self.conn is None:
+            raise RuntimeError("Installer has no database connection; run() must create one first")
+        stamp = TODAY + " 12:00:00"
+        for key, vtype, value in INSTALL_DEFAULT_SETTINGS:
+            self.conn.execute(INSTALL_SQL_SETTING, (key, vtype, value, stamp))
+        if len(admin_password) < 8:
+            raise RuntimeError("The admin password must be at least 8 characters")
+        self.conn.execute(INSTALL_SQL_ADMIN, (admin_user, None, "hashed:" + admin_password, admin_user,
+                                              "admin", "ar", stamp, stamp))
+        return f"{len(INSTALL_DEFAULT_SETTINGS)} setting(s) upserted \u00b7 admin \"{admin_user}\" ensured"
+
+    def self_check(self) -> str:
+        if self.conn is None:
+            raise RuntimeError("Installer has no database connection; run() must create one first")
+        row = self.conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()
+        version = int(row[0]) if row else 0
+        if version != MIGRATOR_CURRENT:
+            raise RuntimeError(f"Schema is at version {version} but this build expects {MIGRATOR_CURRENT}")
+        schema = json.loads((Path(self.root) / "db" / "schema.json").read_text(encoding="utf-8"))
+        expected = set(schema["tables"])
+        present = {r[0].lower() for r in self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'")}
+        missing = sorted(expected - present)
+        if missing:
+            raise RuntimeError("Schema is missing table(s): " + ", ".join(missing))
+        return f"schema v{version} \u00b7 {len(present)} tables present, none missing"
+
+    def run(self) -> dict:
+        steps, fatal = [], None
+        for name, work in [("environment", self.check_environment), ("config", self.write_config),
+                           ("secret", self.load_config), ("seed", self.seed),
+                           ("self_check", self.self_check)]:
+            try:
+                steps.append({"name": name, "ok": True, "detail": str(work())})
+            except Exception as exc:  # noqa: BLE001 - the installer reports, it does not crash
+                steps.append({"name": name, "ok": False, "detail": str(exc)})
+                fatal = str(exc)
+                break
+        return {"ok": fatal is None, "steps": steps, "fatal": fatal}
+
+
+def proof_f() -> None:
+    print("F \u00b7 static export + installer: a refused game produces no file, an install proves itself")
+    conn = fresh_conn()
+    conn.executescript((ROOT / "db" / "schema.sqlite.sql").read_text(encoding="utf-8"))
+    ids = seed_catalogue(conn)
+    policy = Policy(json.loads((ROOT / "db" / "license_rules.json").read_text(encoding="utf-8")))
+    auditor = Auditor(conn, policy)
+    dist = tempfile.mkdtemp(prefix="arcade-dist-")
+
+    # --- F1: the manifest the exporter is built from
+    manifest = auditor.manifest()
+    check("manifest covers every published game", len(manifest["games"]) == len(CATALOGUE), str(len(manifest["games"])))
+    check("manifest exportable flag is the audit verdict",
+          all(g["exportable"] == (g["verdict"] != "blocked") for g in manifest["games"]))
+    check("manifest counts equal the audit split",
+          manifest["counts"]["ok"] + manifest["counts"]["warn"] + manifest["counts"]["blocked"] == len(CATALOGUE))
+    rules_bytes = (ROOT / "db" / "license_rules.json").read_bytes()
+    check("rules_sha256 is the hash of the policy the auditor loaded",
+          manifest["rules_sha256"] == hashlib.sha256(php_json_encode(json.loads(rules_bytes)).encode()).hexdigest())
+    check("manifest carries the rules version", manifest["rules_version"] == policy.version())
+    by_slug = {g["slug"]: g for g in manifest["games"]}
+    check("a no-redistribution licence is refused for export",
+          by_slug["shop-only"]["exportable"] is False and "no_redistribution" in by_slug["shop-only"]["reasons"],
+          str(by_slug["shop-only"]["reasons"]))
+    check("cc-by-nc is refused for export on a commercial install",
+          by_slug["nc-arcade"]["exportable"] is False and "not_commercial_ok" in by_slug["nc-arcade"]["reasons"],
+          str(by_slug["nc-arcade"]["reasons"]))
+    check("own work is exportable", by_slug["neon-worm"]["exportable"] is True)
+    check("cc-by work is exportable and carries its attribution",
+          by_slug["pixel-paint"]["exportable"] is True and by_slug["pixel-paint"]["attribution"] == ATTR)
+
+    # --- F2: the bundle
+    report = Exporter(auditor, dist, str(ROOT / "db" / "license_rules.json")).export()
+    exportable = [g["slug"] for g in manifest["games"] if g["exportable"] is True]
+    refused = [g["slug"] for g in manifest["games"] if g["exportable"] is False]
+    check("the bundle contains exactly the exportable games",
+          report["exported"] == len(exportable) > 0, f"{report['exported']} vs {len(exportable)}")
+    on_disk = sorted(p.parent.name for p in Path(dist, "game").glob("*/index.html"))
+    check("every exportable game got a page", on_disk == sorted(exportable), str(on_disk))
+    check("a refused game produces NO file at all",
+          all(not Path(dist, "game", slug).exists() for slug in refused),
+          str([s for s in refused if Path(dist, "game", s).exists()]))
+    check("the refusals are named in the manifest, not silently dropped",
+          sorted(r["slug"] for r in report["refusals"]) == sorted(refused))
+    check("every refusal carries the finding codes that caused it",
+          all(r["reasons"] for r in report["refusals"]), str(report["refusals"]))
+    page = Path(dist, "game", "pixel-paint", "index.html").read_text(encoding="utf-8")
+    check("an exported page embeds the attribution it owes", ATTR in page)
+    check("an exported page declares the licence type it was cleared under",
+          'data-license="cc-by"' in page, page[:120])
+    check("an exported page is RTL Arabic-first", page.startswith('<!doctype html>\n<html lang="ar" dir="rtl">'))
+    copied = Path(dist, "assets", "license-rules.json").read_bytes()
+    check("the shipped policy copy is byte-identical to the policy the audit used",
+          hashlib.sha256(copied).hexdigest() == hashlib.sha256(rules_bytes).hexdigest())
+    written = json.loads(Path(dist, "license-manifest.json").read_text(encoding="utf-8"))
+    check("the manifest records the hash of the bytes it shipped",
+          written["rules_file_sha256"] == hashlib.sha256(copied).hexdigest())
+    check("a static host can re-check the rules it serves",
+          written["rules_sha256"] == hashlib.sha256(php_json_encode(json.loads(copied)).encode()).hexdigest())
+    index_html = Path(dist, "index.html").read_text(encoding="utf-8")
+    check("the index links only games that were exported",
+          all(f"/game/{s}/" in index_html for s in exportable)
+          and all(f"/game/{s}/" not in index_html for s in refused))
+    check("the report counts what it wrote", report["bytes"] > 0 and len(report["files"]) == len(exportable) + 3)
+
+    tampered = Path(dist, "tampered-rules.json")
+    tampered.write_bytes(rules_bytes.replace(b'"version"', b'"version_x"', 1))
+    try:
+        Exporter(auditor, dist, str(tampered)).export()
+        check("a policy file that is not the audited policy refuses the export", False, "no exception raised")
+    except RuntimeError as exc:
+        check("a policy file that is not the audited policy refuses the export", "not the policy" in str(exc), str(exc))
+    try:
+        Exporter(auditor, dist, str(ROOT / "package.json")).export()
+        check("a policy file that is valid JSON but a different document is refused", False, "no exception raised")
+    except RuntimeError as exc:
+        check("a policy file that is valid JSON but a different document is refused", True, str(exc))
+
+    # --- F3: the installer
+    inst_root = tempfile.mkdtemp(prefix="arcade-install-")
+    Path(inst_root, "config").mkdir(parents=True)
+    Path(inst_root, "db").mkdir(parents=True)
+    shutil.copy(ROOT / "config" / "config.sample.php", Path(inst_root, "config", "config.sample.php"))
+    shutil.copy(ROOT / "db" / "schema.json", Path(inst_root, "db", "schema.json"))
+    installer = Install(conn=conn, root=inst_root)
+    check("the environment check passes on a supported PHP", "PHP 8.3.0" in installer.check_environment())
+    try:
+        Install(conn=conn, root=inst_root, php_version="8.0.30").check_environment()
+        check("PHP below the minimum is refused", False, "no exception raised")
+    except RuntimeError as exc:
+        check("PHP below the minimum is refused", "8.1.0+ required" in str(exc), str(exc))
+    try:
+        Install(conn=conn, root=inst_root, extensions=["pdo", "json"]).check_environment()
+        check("a missing extension is refused by name", False, "no exception raised")
+    except RuntimeError as exc:
+        check("a missing extension is refused by name", "mbstring" in str(exc), str(exc))
+    try:
+        Install(conn=conn, root=inst_root, drivers=["pgsql"]).check_environment()
+        check("a PDO driver the engine cannot use is refused", False, "no exception raised")
+    except RuntimeError as exc:
+        check("a PDO driver the engine cannot use is refused", "pdo_mysql or pdo_sqlite" in str(exc), str(exc))
+
+    installer.write_config()
+    secret = installer.load_config()
+    check("the written secret is 32 bytes of hex, not the shipped placeholder",
+          len(secret) == 64 and secret != "change-me-to-32-plus-random-bytes", secret[:8] + "\u2026")
+    other_root = tempfile.mkdtemp(prefix="arcade-install2-")
+    Path(other_root, "config").mkdir(parents=True)
+    shutil.copy(ROOT / "config" / "config.sample.php", Path(other_root, "config", "config.sample.php"))
+    Install(conn=conn, root=other_root).write_config()
+    check("two installs do not share a signing key",
+          Install(conn=conn, root=other_root).load_config() != secret)
+    rotator = Install(conn=conn, root=inst_root, options={"force": True})
+    rotator.write_config()
+    rotated = rotator.load_config()
+    check("--force rotates the signing key", rotated != secret and len(rotated) == 64, rotated[:8] + "\u2026")
+    check("without force an existing config is left alone",
+          installer.write_config().endswith("left untouched"))
+    check("and the no-force run really left the previous key on disk", installer.load_config() == rotated)
+    Path(inst_root, "config", "config.php").write_text(
+        "<?php return ['secret' => 'twelve-chars'];", encoding="utf-8")
+    try:
+        installer.load_config()
+        check("a 12-byte secret stops the install (the limit is 32, not 8)", False, "no exception raised")
+    except RuntimeError as exc:
+        check("a 12-byte secret stops the install (the limit is 32, not 8)",
+              "shorter than 32 bytes" in str(exc), str(exc))
+
+    conn.execute("INSERT INTO schema_version (version, applied_at) VALUES (?, ?)", (MIGRATOR_CURRENT, TODAY + " 12:00:00"))
+    check("seeding is idempotent: settings upsert, admin insert once",
+          "5 setting(s)" in installer.seed() and "5 setting(s)" in installer.seed())
+    check("the settings table holds one row per key",
+          conn.execute("SELECT COUNT(*) FROM settings").fetchone()[0] == len(INSTALL_DEFAULT_SETTINGS))
+    check("the admin account was not duplicated",
+          conn.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'").fetchone()[0] == 1)
+    conn.execute("UPDATE settings SET value_text = 'changed' WHERE key_name = 'site_name_en'")
+    installer.seed()
+    check("a re-seed does not overwrite copy the operator edited",
+          conn.execute("SELECT value_text FROM settings WHERE key_name = 'site_name_en'").fetchone()[0]
+          == "changed")
+    conn.execute("DELETE FROM settings WHERE key_name = 'commercial'")
+    installer.seed()
+    check("a setting added later is still seeded on the next run",
+          conn.execute("SELECT COUNT(*) FROM settings WHERE key_name = 'commercial'").fetchone()[0] == 1)
+    check("the installer's own SQL is the SQL this proof ran",
+          "ON CONFLICT(key_name) DO NOTHING" in INSTALL_SQL_SETTING
+          and "ON CONFLICT(username) DO NOTHING" in INSTALL_SQL_ADMIN)
+    check("self-check passes on a fully migrated schema", "none missing" in installer.self_check(), installer.self_check())
+    conn.execute("DROP TABLE badges")
+    try:
+        installer.self_check()
+        check("self-check names a missing table", False, "no exception raised")
+    except RuntimeError as exc:
+        check("self-check names a missing table", "badges" in str(exc), str(exc))
+    conn.executescript((ROOT / "db" / "schema.sqlite.sql").read_text(encoding="utf-8").split("CREATE TABLE")[0])
+    conn.execute("DELETE FROM schema_version")
+    conn.execute("INSERT INTO schema_version (version, applied_at) VALUES (3, ?)", (TODAY + " 12:00:00",))
+    try:
+        installer.self_check()
+        check("self-check refuses a schema older than this build", False, "no exception raised")
+    except RuntimeError as exc:
+        check("self-check refuses a schema older than this build", "expects " + str(MIGRATOR_CURRENT) in str(exc), str(exc))
+
+    run = Install(conn=conn, root=inst_root, php_version="7.4.33").run()
+    check("run() stops at the first failed step and says which",
+          run["ok"] is False and run["fatal"] is not None and run["steps"][-1]["name"] == "environment",
+          str([s["name"] for s in run["steps"]]))
+
+    shutil.rmtree(dist, ignore_errors=True)
+    shutil.rmtree(inst_root, ignore_errors=True)
+    shutil.rmtree(other_root, ignore_errors=True)
+
+
 def main() -> int:
     proof_a()
     proof_b()
     proof_c()
     proof_d()
     proof_e()
+    proof_f()
     print()
     if FAILURES:
         print(f"✗ {len(FAILURES)}/{CHECKS} checks failed:")
         for f in FAILURES:
             print(f"   - {f}")
         return 1
-    print(f"✓ all {CHECKS} runtime checks hold · schema, migrations, the 8 boards, the licence gate and the providers behave")
+    print(f"✓ all {CHECKS} runtime checks hold · schema, migrations, the 8 boards, the licence gate, the providers, the exporter and the installer behave")
     return 0
 
 
