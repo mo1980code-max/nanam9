@@ -527,6 +527,21 @@ class Handler(BaseHTTPRequestHandler):
             self._html(f'''<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title} · نورس جيمز</title><style>body{{margin:0;background:#080b16;color:#fff;font-family:Tahoma,Arial}}header{{height:58px;display:flex;align-items:center;gap:18px;padding:0 22px;background:#11172a}}header a{{color:#b8ffed;text-decoration:none}}iframe{{display:block;width:100%;height:calc(100vh - 58px);border:0;background:#fff}}</style></head><body><header><a href="/">← العودة للألعاب</a><strong>{title}</strong><span>لعبة مفتوحة المصدر</span></header><iframe src="/games/{slug}/{entry}" allowfullscreen></iframe></body></html>''')
             return
 
+        assets = re.match(r"^/assets/([a-zA-Z0-9._-]+)$", u.path)
+        if assets:
+            target = (ROOT / "public" / "assets" / assets.group(1)).resolve()
+            asset_root = (ROOT / "public" / "assets").resolve()
+            if not str(target).startswith(str(asset_root) + "/") or not target.is_file():
+                self._json({"ok": False, "error": "asset not found"}, 404)
+                return
+            body = target.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", mimetypes.guess_type(str(target))[0] or "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self._write(body)
+            return
+
         uploads = re.match(r"^/uploads/([a-z0-9-]+)/(.*)$", u.path)
         if uploads:
             slug, rel = uploads.groups()
