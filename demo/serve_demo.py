@@ -173,7 +173,7 @@ DB_LOCK = threading.Lock()
 
 
 def ensure_zip() -> Path:
-    """The download bundle: arcade/ alone at the zip root, rebuilt from HEAD if missing."""
+    """The download bundle: this checkout at the zip root, rebuilt from HEAD if missing."""
     zp = Path(tempfile.gettempdir()) / "nawras-arcade.zip"  # outside the repo on purpose
     if zp.is_file() and zp.stat().st_size > 1000:
         return zp
