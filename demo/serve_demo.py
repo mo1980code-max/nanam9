@@ -11,6 +11,7 @@ and reports the live gate output. Zero dependencies.
 from __future__ import annotations
 
 import json
+import mimetypes
 import re
 import sqlite3
 import subprocess
@@ -433,8 +434,46 @@ class Handler(BaseHTTPRequestHandler):
             self._write(body)
             return
 
-        if u.path == "/" or u.path == "/demo":
+        if u.path == "/" or u.path == "/portal":
+            self._html((ROOT / "demo" / "portal.html").read_text(encoding="utf-8"))
+            return
+
+        if u.path == "/demo":
             self._html((ROOT / "demo" / "demo.html").read_text(encoding="utf-8"))
+            return
+
+        play = re.match(r"^/play/([a-z0-9-]+)$", u.path)
+        if play:
+            slug = play.group(1)
+            game_dir = ROOT / "public" / "games" / slug
+            if not game_dir.is_dir() or not re.fullmatch(r"[a-z0-9-]+", slug):
+                self._json({"ok": False, "error": "game not found"}, 404)
+                return
+            entry = "index.html" if (game_dir / "index.html").is_file() else "index.htm"
+            if not (game_dir / entry).is_file():
+                self._json({"ok": False, "error": "game has no web entry point yet"}, 404)
+                return
+            title = next((g[1] for g in [("2048", "٢٠٤٨"), ("pacman-canvas", "باك مان كانفس"),
+                            ("tanks-of-freedom", "دبابات الحرية"), ("hextris", "هكستريس"),
+                            ("underrun", "أندرَّان"), ("clumsy-bird", "الطائر الأخرق"),
+                            ("hexgl", "هكس جي إل")] if g[0] == slug), slug)
+            self._html(f'''<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title} · نورس جيمز</title><style>body{{margin:0;background:#080b16;color:#fff;font-family:Tahoma,Arial}}header{{height:58px;display:flex;align-items:center;gap:18px;padding:0 22px;background:#11172a}}header a{{color:#b8ffed;text-decoration:none}}iframe{{display:block;width:100%;height:calc(100vh - 58px);border:0;background:#fff}}</style></head><body><header><a href="/">← العودة للألعاب</a><strong>{title}</strong><span>لعبة مفتوحة المصدر</span></header><iframe src="/games/{slug}/{entry}" allowfullscreen></iframe></body></html>''')
+            return
+
+        static = re.match(r"^/games/([a-z0-9-]+)/(.*)$", u.path)
+        if static:
+            slug, rel = static.groups()
+            game_root = (ROOT / "public" / "games" / slug).resolve()
+            target = (game_root / rel).resolve()
+            if not str(target).startswith(str(game_root) + "/") or not target.is_file():
+                self._json({"ok": False, "error": "asset not found"}, 404)
+                return
+            body = target.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", mimetypes.guess_type(str(target))[0] or "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self._write(body)
             return
 
         m = re.match(r"^/docs/([\w-]+)\.html$", u.path)
