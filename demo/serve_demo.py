@@ -24,13 +24,13 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
-from prove_runtime import (  # noqa: E402  (same SQL as Gamify\Leaderboard / Licensing\LicenseAuditor)
-    Auditor, Board, Policy, bucket_key,
+from prove_runtime import (  # noqa: E402  (same SQL as the real PHP classes)
+    HOSTILE_URLS, Auditor, Board, Feed, Pack, Policy, bucket_key, guard_inspect,
 )
 
 PORT = int(__import__("os").environ.get("PORT", "8090"))
 NOW = "2026-09-05 12:00:00"
-DOCS = ["LEADERBOARD", "UPGRADING", "CA-COMPAT", "LICENSING", "README"]
+DOCS = ["LEADERBOARD", "UPGRADING", "CA-COMPAT", "LICENSING", "PROVIDERS", "README"]
 
 GAMES = [
     (1, "neon-worm", "نيون وورم", "casual"),
@@ -210,7 +210,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        self.wfile.write(body)
+        self._write(body)
 
     def _html(self, html, status=200):
         body = html.encode()
@@ -218,7 +218,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        self._write(body)
+
+    def do_HEAD(self):  # proxies and preview panels probe with HEAD; 501 here looked like a dead server
+        self._head_only = True
+        try:
+            self.do_GET()
+        finally:
+            self._head_only = False
+
+    def _write(self, body: bytes):
+        if not getattr(self, "_head_only", False):
+            self.wfile.write(body)
 
     def do_GET(self):
         u = urlparse(self.path)
@@ -304,6 +315,45 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if u.path == "/api/pack":
+            policy = Policy(json.loads((ROOT / "db" / "license_rules.json").read_text(encoding="utf-8")))
+            pack = Pack(json.loads((ROOT / "db" / "oss_pack.json").read_text(encoding="utf-8")), policy)
+            report = pack.verify_all()
+            self._json({"ok": True, **report})
+            return
+
+        if u.path == "/api/guard":
+            urls = HOSTILE_URLS + [("https://games.example.org/feed.json", "")]
+            self._json({"ok": True, "results": [
+                {"url": u, "refused": guard_inspect(u)["reason"] or "—"} for u, _ in urls]})
+            return
+
+        if u.path == "/api/feed":
+            items = [
+                {"external_id": "gd-1", "title_en": "Neon Racer", "license_type": "mit",
+                 "license_ref": "MIT", "commit_sha": "9" * 40, "license_file": "LICENSE",
+                 "license_sha256": "a" * 64, "proof_url": "https://git.example/gd-1",
+                 "captured_at": NOW[:10], "attribution_required": 1,
+                 "attribution_html": "Neon Racer © its authors, MIT"},
+                {"external_id": "gd-2", "title_en": "Ghost Maze", "license_type": "cc-by",
+                 "license_ref": "CC BY 4.0", "proof_url": "https://git.example/gd-2"},
+                {"external_id": "gd-3", "title_en": "Mystery", "license_type": "beerware"},
+            ]
+            with DB_LOCK:
+                feed = Feed(self.conn, Policy(json.loads(
+                    (ROOT / "db" / "license_rules.json").read_text(encoding="utf-8"))))
+                good = feed.ingest("gamedistribution", "https://api.example.org/feed.json", items,
+                                   resolver=lambda h: ["93.184.216.34"])
+                bad = feed.ingest("gamedistribution",
+                                  "http://169.254.169.254/latest/meta-data/iam/", items)
+                runs = self.conn.execute(
+                    "SELECT provider, status, rows_seen, rows_new, rows_rejected FROM provider_runs ORDER BY id DESC LIMIT 5"
+                ).fetchall()
+            self._json({"ok": True, "clean_feed": good, "hostile_feed": bad,
+                        "recent_runs": [dict(zip(("provider", "status", "seen", "new", "rejected"), r))
+                                        for r in runs]})
+            return
+
         if u.path == "/api/gates":
             self._json({"ok": True, "output": self.gates})
             return
@@ -320,7 +370,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Content-Disposition", "attachment; filename=\"nawras-arcade.zip\"")
             self.end_headers()
-            self.wfile.write(body)
+            self._write(body)
             return
 
         if u.path == "/" or u.path == "/demo":

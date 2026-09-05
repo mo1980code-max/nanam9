@@ -9,6 +9,6 @@
     "schema": "python3 tools/gen_schema_sql.py --verify",
     "rules": "python3 tools/gen_license_rules.py --verify",
     "bridge": "node --check public/assets/ca-compat.js",
-    "test": "npm run -s bridge && python3 tools/verify_php.py && python3 tools/prove_runtime.py && python3 tools/gen_schema_sql.py --verify && python3 tools/gen_license_rules.py --verify && python3 -c \"import json;[json.load(open(f)) for f in ['db/schema.json','db/migrations.json']];print('✓ json valid')\""
+    "test": "npm run -s bridge && python3 tools/verify_php.py && python3 tools/prove_runtime.py && python3 tools/gen_schema_sql.py --verify && python3 tools/gen_license_rules.py --verify && python3 -c \"import json;[json.load(open(f)) for f in ['db/schema.json','db/migrations.json','db/license_rules.json','db/oss_pack.json']];print('✓ json valid')\""
   }
 }

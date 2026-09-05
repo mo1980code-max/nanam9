@@ -75,6 +75,20 @@
     <div id="licBody"></div>
   </div>
 
+  <h2 style="margin-top:2.5rem">الحزمة مفتوحة المصدر — <code>GET /api/pack</code></h2>
+  <p class="note">كل مدخلة تُفحص بنفس سياسة الترخيص، في وضع <b>التصدير</b>، لأن الحزمة بحكم تعريفها تُعاد توزيعها.</p>
+  <table id="pack">
+    <thead><tr><th>اللعبة</th><th>الرخصة</th><th>الحكم</th><th>السبب</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h2 style="margin-top:2.5rem">حارس SSRF — <code>GET /api/guard</code></h2>
+  <p class="note">كل عنوان يُرفض <b>قبل</b> أن يخرج أي طلب من الخادم — بما فيها الترميزات التي تتجاوز فحصاً نصّياً ساذجاً.</p>
+  <pre id="guard">…</pre>
+
+  <h2 style="margin-top:2.5rem">استيراد مزوّد — <code>GET /api/feed</code></h2>
+  <pre id="feed">…</pre>
+
   <h2 style="margin-top:2.5rem">تدقيق الفهرس كاملاً — <code>GET /api/audit</code></h2>
   <pre id="audit">…يُدقَّق…</pre>
 
@@ -87,6 +101,7 @@
     <a href="/docs/UPGRADING.html">الترحيلات</a>
     <a href="/docs/CA-COMPAT.html">جسر ca_api</a>
     <a href="/docs/LICENSING.html">طبقة الترخيص</a>
+    <a href="/docs/PROVIDERS.html">المزوّدات وSSRF</a>
     <a href="/docs/README.html">README</a>
   </nav>
 
@@ -176,6 +191,35 @@ async function loadLicense(slug) {
   if (!d.licenses.length) html += '<p style="color:#ff9ab0">لا صفوف في <code>game_licenses</code> لهذه اللعبة — وهذا سبب الحجب.</p>';
   document.getElementById('licBody').innerHTML = html;
 }
+
+fetch('/api/pack').then(r => r.json()).then(d => {
+  const tb = document.querySelector('#pack tbody');
+  d.entries.forEach(e => {
+    const why = e.missing.length ? ('حقول ناقصة: ' + e.missing.join(', '))
+              : e.reasons.length ? e.reasons.join(', ')
+              : (e.warnings.length ? 'تحذير: ' + e.warnings.join(', ') : '—');
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td><code>' + e.slug + '</code></td><td><code>' + e.license_type + '</code></td>' +
+      '<td><span class="pill ' + (e.ok ? (e.warnings.length ? 'warn' : 'ok') : 'blocked') + '">' +
+      (e.ok ? 'مقبولة' : 'مرفوضة') + '</span></td><td>' + why + '</td>';
+    tb.appendChild(tr);
+  });
+});
+
+fetch('/api/guard').then(r => r.json()).then(d => {
+  document.getElementById('guard').textContent = d.results.map(x =>
+    (x.refused === '—' ? '✓ مسموح  ' : '⛔ ' + x.refused.padEnd(20)) + '  ' + x.url).join('\n');
+});
+
+fetch('/api/feed').then(r => r.json()).then(d => {
+  const c = d.clean_feed, b = d.hostile_feed;
+  document.getElementById('feed').textContent =
+    'تغذية سليمة: رُئيت ' + c.seen + ' · جديدة ' + c.new + ' · مقبولة ' + c.accepted + ' · مرفوضة ' + c.rejected + '\n' +
+    c.rejections.map(r => '   ⛔ ' + (r.external_id || '(بلا معرّف)') + ' ← ' + r.reasons.join(', ')).join('\n') + '\n\n' +
+    'عنوان معادٍ: ' + (b.ok ? 'قُبل (!)' : 'رُفض قبل أي طلب — ' + b.reason) + '\n\n' +
+    'آخر عمليات provider_runs:\n' +
+    d.recent_runs.map(r => '   ' + r.status.padEnd(8) + ' seen=' + r.seen + ' new=' + r.new + ' rejected=' + r.rejected).join('\n');
+});
 
 fetch('/api/gates').then(r => r.json()).then(d => document.getElementById('out').textContent = d.output);
 fetch('/api/audit').then(r => r.json()).then(d => {

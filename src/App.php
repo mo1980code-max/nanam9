@@ -9,6 +9,9 @@ use Nawras\Gamify\Leaderboard;
 use Nawras\Gamify\Signer;
 use Nawras\Licensing\LicenseAuditor;
 use Nawras\Licensing\LicensePolicy;
+use Nawras\Providers\FeedConverter;
+use Nawras\Providers\OssPack;
+use Nawras\Providers\UrlGuard;
 
 if (!\defined('ARCADE_ROOT')) {
     \define('ARCADE_ROOT', \dirname(__DIR__));
@@ -31,6 +34,12 @@ final class App
 
     private LicenseAuditor $licenses;
 
+    private UrlGuard $guard;
+
+    private OssPack $pack;
+
+    private FeedConverter $feeds;
+
     public function __construct(private readonly array $config)
     {
         require_once __DIR__ . '/autoload.php';
@@ -40,6 +49,9 @@ final class App
         $this->board = new Leaderboard($this->db, $secret);
         $this->policy = LicensePolicy::load();
         $this->licenses = new LicenseAuditor($this->db, $this->policy);
+        $this->guard = new UrlGuard();
+        $this->pack = OssPack::load($this->policy);
+        $this->feeds = new FeedConverter($this->db, $this->policy, $this->guard);
     }
 
     public static function boot(?array $config = null): self
@@ -89,6 +101,22 @@ final class App
     public function licensePolicy(): LicensePolicy
     {
         return $this->policy;
+    }
+
+    /** The bundled OSS pack, already verified against the licence policy. */
+    public function ossPack(): OssPack
+    {
+        return $this->pack;
+    }
+
+    public function feeds(): FeedConverter
+    {
+        return $this->feeds;
+    }
+
+    public function urlGuard(): UrlGuard
+    {
+        return $this->guard;
     }
 
     /** True when this install sells access or runs ads; cc-by-nc work is refused when it is. */

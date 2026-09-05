@@ -20,6 +20,10 @@ What it checks (each was proven non-vacuous by injecting a bug and watching exit
   6. migrations        — db/migrations.json parses; the highest version equals
                          Migrator::CURRENT; every step has both dialect lists.
   7. JS bridge         — ca-compat.js only references the eight documented leaderboard types.
+  9. providers         — the reserved-range lists, the required-field lists and the feed SQL in
+                         src/Providers/ are byte-identical to what tools/prove_runtime.py attacks,
+                         the cloud-metadata and loopback ranges are present, and no feed can reach
+                         the network or the catalogue past UrlGuard + LicensePolicy.
   8. licensing         — db/license_rules.json is the ONLY place a licence type is named (no type
                          string in src/Licensing/ code), LicensePolicy::CODES and the policy's
                          finding_labels are the same set in both directions, the auditor's SQL is
@@ -88,24 +92,30 @@ def strip_php(source: str, keep_strings: bool = False) -> tuple[str, str]:
             out.append("\n" if c == "\n" else " ")
             i += 1
             continue
+        # String CONTENT becomes "x", not spaces: blanking it to whitespace made a call whose only
+        # argument is a string literal look like a ZERO-argument call, so every arity check on
+        # $db->one('SELECT ...') compared 0 against the declared minimum. "x" keeps the length and
+        # keeps parentheses inside strings from leaking into the balanced-argument scan.
         if in_single:
             if c == "\\":
-                out.append(c + (source[i + 1] if keep_strings and i + 1 < n else " "))
+                out.append((c + (source[i + 1] if i + 1 < n else " ")) if keep_strings else "xx")
                 i += 2
                 continue
-            if c == "'":
+            closing = c == "'"
+            if closing:
                 in_single = False
-            out.append(c if keep_strings else " ")
+            out.append(c if keep_strings else (" " if closing else "x"))
             i += 1
             continue
         if in_double:
             if c == "\\":
-                out.append(c + (source[i + 1] if keep_strings and i + 1 < n else " "))
+                out.append((c + (source[i + 1] if i + 1 < n else " ")) if keep_strings else "xx")
                 i += 2
                 continue
-            if c == '"':
+            closing = c == '"'
+            if closing:
                 in_double = False
-            out.append(c if keep_strings else " ")
+            out.append(c if keep_strings else (" " if closing else "x"))
             i += 1
             continue
         if c == "/" and nxt == "/":
@@ -145,7 +155,9 @@ class Klass:
     def __init__(self, name: str):
         self.name = name
         self.ctor_args: list[str] = []      # promoted property names
+        self.ctor_required: int = 0         # ctor params without a default
         self.methods: dict[str, int] = {}   # name -> arg count
+        self.min_args: dict[str, int] = {}  # name -> params without a default
         self.props: dict[str, str] = {}     # prop name -> class type
 
 
@@ -160,6 +172,8 @@ def parse_class(code: str) -> Klass:
                 r"((?:(?:private|public|protected|readonly)\s+)*)(\??[\w\\|]+)\s+\$(\w+)", part)
             if pm:
                 k.ctor_args.append(pm.group(3))
+                if "=" not in part:
+                    k.ctor_required += 1
                 # promoted property (has a visibility modifier) -> typed property
                 if any(w in pm.group(1) for w in ("private", "public", "protected")):
                     k.props[pm.group(3)] = pm.group(2)
@@ -176,6 +190,9 @@ def parse_class(code: str) -> Klass:
             if re.match(r"(?:(?:private|public|protected|readonly)\s+)*\??[\w\\|]+\s+\$", part):
                 count += 1
         k.methods[name] = count
+        k.min_args[name] = sum(1 for part in params.split(",")
+                               if part.strip() and "=" not in part
+                               and re.match(r"(?:(?:private|public|protected|readonly)\s+)*\??[\w\\|]+\s+\$", part.strip()))
     for pp in re.finditer(r"private\s+(?:readonly\s+)?([\w\\]+)\s+\$(\w+)\s*;", code):
         k.props[pp.group(2)] = pp.group(1)
     return k
@@ -308,11 +325,11 @@ def main() -> int:
             pass  # builtins vary, skip
         for cls in classes:
             for m in re.finditer(r"new\s+" + cls + r"\s*\(", code):
-                want = len(classes[cls].ctor_args)
+                want, need = len(classes[cls].ctor_args), classes[cls].ctor_required
                 got = arity_of(balanced_args(code, m.end() - 1))
-                if want and got != want:
+                if want and not need <= got <= want:
                     check(f"{path.name}: new {cls}(...) arity", False,
-                          f"expected {want} args, got {got}")
+                          f"expected {need}..{want} args, got {got}")
         # method calls on typed properties
         for prop, typ in classes.get(_class_name(path), Klass("?")).props.items():
             if typ not in classes:
@@ -325,10 +342,11 @@ def main() -> int:
                           False, f"no such method on {typ}")
                 elif meth in classes[typ].methods:
                     want = classes[typ].methods[meth]
+                    need = classes[typ].min_args.get(meth, want)
                     got = arity_of(args)
-                    if got > want:
+                    if not need <= got <= want:
                         check(f"{path.name}: $this->{prop}->{meth}() arity", False,
-                              f"expected ≤{want}, got {got}")
+                              f"expected {need}..{want}, got {got}")
 
     # -- 4: SQL columns vs schema --------------------------------------------------------
     schema = json.loads((ROOT / "db" / "schema.json").read_text(encoding="utf-8"))
@@ -461,6 +479,84 @@ def main() -> int:
         check("play() passes the licence gate", "$this->gate(" in php_method(site_src, "play"))
         check("gate() consults LicenseAuditor",
               "$this->licenses->canServe(" in php_method(site_src, "gate"))
+
+    # -- 9: providers --------------------------------------------------------------------
+    guard_path = SRC / "Providers" / "UrlGuard.php"
+    if not guard_path.is_file():
+        check("providers layer present", False, "src/Providers/ missing")
+    else:
+        guard_src = guard_path.read_text(encoding="utf-8")
+        converter_src = (SRC / "Providers" / "FeedConverter.php").read_text(encoding="utf-8")
+        pack_src = (SRC / "Providers" / "OssPack.php").read_text(encoding="utf-8")
+
+        def php_list(src: str, name: str) -> list:
+            m = re.search(name + r"\s*=\s*\[(.*?)\];", src, re.S)
+            return re.findall(r"'([^']+)'", m.group(1)) if m else []
+
+        def py_list(src: str, name: str) -> list:
+            m = re.search(r"^" + name + r"\s*=\s*\[(.*?)\]", src, re.S | re.M)
+            return re.findall(r'"([^"]+)"', m.group(1)) if m else []
+
+        # 9a · the reserved ranges the PHP blocks are exactly the ranges the proof attacks
+        for name in ("BLOCKED_V4", "BLOCKED_V6", "BLOCKED_HOSTS", "BLOCKED_SUFFIXES"):
+            php_ranges, py_ranges = php_list(guard_src, name), py_list(prove, name)
+            check(f"{name} is identical in UrlGuard and the proof", php_ranges == py_ranges,
+                  f"php={php_ranges} proof={py_ranges}")
+            if name.startswith("BLOCKED_V"):
+                check(f"{name} is not empty", len(php_ranges) > 0)
+        check("169.254.0.0/16 (cloud metadata) is blocked", "169.254.0.0/16" in php_list(guard_src, "BLOCKED_V4"))
+        check("127.0.0.0/8 (loopback) is blocked", "127.0.0.0/8" in php_list(guard_src, "BLOCKED_V4"))
+
+        # 9b · the required-field lists match their mirrors
+        for php_name, py_name, src in [
+            ("REQUIRED", "PACK_REQUIRED", pack_src),
+            ("REQUIRED_ITEM", "FEED_REQUIRED_ITEM", converter_src),
+        ]:
+            php_fields, py_fields = php_list(src, php_name), py_list(prove, py_name)
+            check(f"{php_name} matches the proof", php_fields == py_fields,
+                  f"php={php_fields} proof={py_fields}")
+
+        # 9c · the feed SQL the proof runs is the SQL FeedConverter runs
+        for frag in ["SELECT id FROM provider_games WHERE provider = ? AND external_id = ?",
+                     "INSERT INTO provider_games (provider, external_id, payload, fetched_at)",
+                     "UPDATE provider_games SET payload = ?, fetched_at = ? WHERE id = ?",
+                     "INSERT INTO provider_runs (provider, status, rows_seen, rows_new, rows_rejected,"
+                     " started_at)",
+                     "UPDATE provider_runs SET status = ?, rows_seen = ?, rows_new = ?, rows_rejected"
+                     " = ?, detail = ?, finished_at = ? WHERE id = ?"]:
+            check(f"provider proof sync: '{frag.strip()[:48]}...'",
+                  squash(frag) in squash(converter_src) and squash(frag) in squash(prove))
+
+        # 9d · every refusal the proof exercises is actually implemented in the PHP. Without this
+        # the range-list parity above only proves the two LISTS agree; deleting the userinfo branch
+        # from UrlGuard would leave the list intact and open a real hole.
+        hostile = re.search(r"HOSTILE_URLS\s*=\s*\[(.*?)\n\]", prove, re.S)
+        expected_reasons = re.findall(r'\("([^"]+)",\s*"([a-z_]+)"\)', hostile.group(1)) if hostile else []
+        reasons = sorted({r for _, r in expected_reasons if r})
+        check("the proof declares a hostile-URL table", bool(reasons))
+        missing = [r for r in reasons if f"'{r}'" not in guard_src]
+        check("every refusal reason the proof attacks exists in UrlGuard.php", missing == [], str(missing))
+        check("the proof attacks more than a token number of URLs", len(expected_reasons) >= 20,
+              f"{len(expected_reasons)} cases")
+
+        # 9e · a feed cannot be ingested past the guard, and the pack cannot be judged past the policy
+        check("FeedConverter::ingest consults UrlGuard",
+              "$this->guard->inspect(" in php_method(converter_src, "ingest"))
+        check("FeedConverter::ingest consults LicensePolicy",
+              "$this->policy->decide(" in php_method(converter_src, "ingest"))
+        check("OssPack::verifyEntry consults LicensePolicy in export mode",
+              "LicensePolicy::MODE_EXPORT" in php_method(pack_src, "verifyEntry"))
+
+        # 9f · the shipped pack parses and its slugs are unique
+        pack_file = ROOT / "db" / "oss_pack.json"
+        pack_doc = json.loads(pack_file.read_text(encoding="utf-8")) if pack_file.is_file() else {}
+        slugs = [e.get("slug") for e in pack_doc.get("entries", [])]
+        check("db/oss_pack.json has entries with unique slugs",
+              bool(slugs) and len(slugs) == len(set(slugs)), str(slugs))
+        check("every pack entry names an upstream repo",
+              all(str(e.get("upstream_repo") or "").startswith(("http://", "https://"))
+                  for e in pack_doc.get("entries", []) if e.get("upstream_repo")))
+
 
     print()
     if FAILURES:

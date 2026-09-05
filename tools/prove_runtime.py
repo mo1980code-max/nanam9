@@ -22,6 +22,11 @@ PHP never runs in this environment, so this file pins the parts that MUST behave
                       disputed-sibling / wildcard-origin / non-commercial / copyleft / dual-licence
                       / export-mode. The SQL is copied from src/Licensing/LicenseAuditor.php and
                       the audit ledger + verdict cache are checked on real rows.
+  E. providers      — the SSRF guard is run against every reserved range in the encodings that
+                      dodge a string check (decimal, octal, hex, short form, ::ffff:), plus scheme,
+                      userinfo, port and DNS-rebinding cases; the shipped OSS pack is gated with the
+                      same policy in export mode; and a feed is ingested twice into real
+                      provider_games / provider_runs rows to prove idempotency and the audit trail.
 
 Exit 0 proves everything; any deviation exits 1 with the failing assertion.
 """
@@ -491,6 +496,21 @@ class Auditor:
         self.conn = conn
         self.policy = policy
 
+    @staticmethod
+    def license_row(item: dict) -> dict:
+        """Twin of FeedConverter::licenseRow — the defaults matter: status defaults to active."""
+        return {
+            "id": 0, "provider": item.get("provider", "feed"), "external_id": item.get("external_id", ""),
+            "license_type": item.get("license_type", ""), "license_ref": item.get("license_ref", ""),
+            "upstream_repo": item.get("upstream_repo", ""), "commit_sha": item.get("commit_sha", ""),
+            "license_file": item.get("license_file", ""), "license_sha256": item.get("license_sha256", ""),
+            "proof_url": item.get("proof_url", ""), "invoice_ref": item.get("invoice_ref", ""),
+            "allow_origins": item.get("allow_origins", ""),
+            "attribution_required": int(item.get("attribution_required", 0)),
+            "attribution_html": item.get("attribution_html"), "captured_at": item.get("captured_at"),
+            "expires_at": item.get("expires_at"), "status": item.get("status", "active"),
+        }
+
     def licenses_for(self, game_id: int) -> list[dict]:
         cur = self.conn.execute(SQL_GAME_LICENSES, (game_id,))
         cols = [d[0] for d in cur.description]
@@ -872,19 +892,372 @@ def proof_d() -> None:
           auditor.can_serve(ids["echo-cards"])["ok"] is True)
 
 
+# ------------------------------------------------------- E (providers + SSRF)
+# Mirrors of Nawras\Providers\{UrlGuard,OssPack,FeedConverter}. The reserved-range lists and the
+# SQL are copied verbatim from the PHP; tools/verify_php.py fails the build when either side drifts.
+BLOCKED_V4 = [
+    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+    "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15",
+    "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "255.255.255.255/32",
+]
+BLOCKED_V6 = [
+    "::/128", "::1/128", "64:ff9b::/96", "100::/64", "2001:db8::/32", "fc00::/7",
+    "fe80::/10", "ff00::/8",
+]
+BLOCKED_HOSTS = ["localhost"]
+BLOCKED_SUFFIXES = [".local", ".internal", ".localhost", ".lan", ".intranet"]
+ALLOWED_SCHEMES = ["http", "https"]
+ALLOWED_PORTS = [80, 443]
+PACK_REQUIRED = [
+    "slug", "title_ar", "title_en", "provider", "license_type", "license_ref",
+    "upstream_repo", "commit_sha", "license_file", "license_sha256", "proof_url",
+]
+FEED_REQUIRED_ITEM = ["external_id", "title_en", "license_type"]
+
+SQL_LOOKUP = "SELECT id FROM provider_games WHERE provider = ? AND external_id = ?"
+SQL_STORE = """
+INSERT INTO provider_games (provider, external_id, payload, fetched_at)
+VALUES (?, ?, ?, ?)
+"""
+SQL_REFRESH = "UPDATE provider_games SET payload = ?, fetched_at = ? WHERE id = ?"
+SQL_RUN_OPEN = """
+INSERT INTO provider_runs (provider, status, rows_seen, rows_new, rows_rejected, started_at)
+VALUES (?, ?, ?, ?, ?, ?)
+"""
+SQL_RUN_CLOSE = "UPDATE provider_runs SET status = ?, rows_seen = ?, rows_new = ?, rows_rejected = ?, detail = ?, finished_at = ? WHERE id = ?"
+
+
+def normalize_ip(host: str) -> str | None:
+    """Python twin of UrlGuard::normalizeIp — dotted, decimal, octal, hex and short forms."""
+    import ipaddress
+    host = host.strip("[]")
+    if not host:
+        return None
+    if ":" in host:
+        low = host.lower()
+        if low.startswith("::ffff:"):
+            tail = low[7:]
+            v4 = normalize_ip(tail)
+            if v4 and v4.count(".") == 3:
+                return v4
+        try:
+            return str(ipaddress.ip_address(low))
+        except ValueError:
+            return None
+    try:
+        return str(ipaddress.IPv4Address(host))
+    except ValueError:
+        pass
+    parts = host.split(".")
+    if len(parts) > 4:
+        return None
+    nums = []
+    for part in parts:
+        if not part:
+            return None
+        if part.lower().startswith("0x"):
+            try:
+                nums.append(int(part[2:], 16))
+            except ValueError:
+                return None
+        elif len(part) > 1 and part[0] == "0":
+            try:
+                nums.append(int(part[1:], 8))
+            except ValueError:
+                return None
+        elif part.isdigit():
+            nums.append(int(part))
+        else:
+            return None
+    limit = {1: 0xFFFFFFFF, 2: 0xFFFFFF, 3: 0xFFFF, 4: 0xFF}[len(nums)]
+    if nums[-1] > limit:
+        return None
+    packed = 0
+    for i, value in enumerate(nums):
+        # same inet_aton rule as the PHP: last part at the bottom, the rest one byte each at the top
+        shift = 0 if i == len(nums) - 1 else 8 * (3 - i)
+        packed |= value << shift
+    return str(ipaddress.IPv4Address(packed & 0xFFFFFFFF))
+
+
+def is_blocked_ip(ip: str) -> bool:
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return True
+    ranges = BLOCKED_V4 if addr.version == 4 else BLOCKED_V6
+    return any(addr in ipaddress.ip_network(r) for r in ranges)
+
+
+def guard_inspect(url: str, resolver=None) -> dict:
+    """Python twin of UrlGuard::inspect. resolver(host) stands in for DNS."""
+    from urllib.parse import urlsplit
+    url = url.strip()
+    if not url:
+        return {"ok": False, "reason": "empty_url", "host": "", "ips": []}
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return {"ok": False, "reason": "unparsable", "host": "", "ips": []}
+    if parts.scheme.lower() not in ALLOWED_SCHEMES:
+        return {"ok": False, "reason": "scheme_not_allowed", "host": parts.hostname or "", "ips": []}
+    if not parts.hostname:
+        return {"ok": False, "reason": "no_host", "host": "", "ips": []}
+    if parts.username is not None or parts.password is not None:
+        return {"ok": False, "reason": "userinfo_not_allowed", "host": parts.hostname, "ips": []}
+    port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
+    if port not in ALLOWED_PORTS:
+        return {"ok": False, "reason": "port_not_allowed", "host": parts.hostname, "ips": []}
+    host = parts.hostname.lower()
+    if host in BLOCKED_HOSTS or any(host.endswith(s) for s in BLOCKED_SUFFIXES):
+        return {"ok": False, "reason": "host_blocked", "host": host, "ips": []}
+    ip = normalize_ip(host)
+    if ip is not None:
+        return {"ok": not is_blocked_ip(ip), "reason": "ip_blocked", "host": host, "ips": [ip]}
+    ips = resolver(host) if resolver else []
+    if resolver and not ips:
+        return {"ok": False, "reason": "unresolvable", "host": host, "ips": []}
+    for resolved in ips:
+        if is_blocked_ip(resolved):
+            return {"ok": False, "reason": "dns_blocked", "host": host, "ips": ips}
+    return {"ok": True, "reason": "", "host": host, "ips": ips}
+
+
+class Pack:
+    """Python twin of Nawras\\Providers\\OssPack."""
+
+    def __init__(self, doc: dict, policy: Policy):
+        self.doc = doc
+        self.policy = policy
+
+    def license_row(self, e: dict) -> dict:
+        return {
+            "id": 0, "provider": e.get("provider", "oss"), "external_id": e.get("slug", ""),
+            "license_type": e.get("license_type", ""), "license_ref": e.get("license_ref", ""),
+            "upstream_repo": e.get("upstream_repo", ""), "commit_sha": e.get("commit_sha", ""),
+            "license_file": e.get("license_file", ""), "license_sha256": e.get("license_sha256", ""),
+            "proof_url": e.get("proof_url", ""), "invoice_ref": e.get("invoice_ref", ""),
+            "allow_origins": e.get("allow_origins", ""),
+            "attribution_required": int(e.get("attribution_required", 0)),
+            "attribution_html": e.get("attribution_html"), "captured_at": e.get("captured_at"),
+            "expires_at": e.get("expires_at"), "status": e.get("status", "active"),
+        }
+
+    def verify_entry(self, e: dict) -> dict:
+        missing = [f for f in PACK_REQUIRED if not str(e.get(f) or "").strip()]
+        if missing:
+            return {"ok": False, "verdict": "incomplete", "slug": e.get("slug", ""),
+                    "license_type": e.get("license_type", ""), "missing": missing,
+                    "reasons": [], "warnings": []}
+        v = self.policy.decide([self.license_row(e)], "export")
+        # the type the entry CLAIMED, so a rejection still names it
+        return {"ok": v["ok"], "verdict": v["verdict"], "slug": e.get("slug", ""),
+                "license_type": e.get("license_type", ""), "missing": [],
+                "reasons": v["reasons"], "warnings": v["warnings"]}
+
+    def verify_all(self) -> dict:
+        rows = [self.verify_entry(e) for e in self.doc["entries"]]
+        ok = sum(1 for r in rows if r["ok"])
+        return {"pack_version": self.doc["version"], "total": len(rows), "accepted": ok,
+                "rejected": len(rows) - ok, "entries": rows}
+
+
+class Feed:
+    """Python twin of Nawras\\Providers\\FeedConverter (same SQL, same order of work)."""
+
+    def __init__(self, conn: sqlite3.Connection, policy: Policy):
+        self.conn = conn
+        self.policy = policy
+
+    @staticmethod
+    def license_row(item: dict) -> dict:
+        """Twin of FeedConverter::licenseRow — the defaults matter: status defaults to active."""
+        return {
+            "id": 0, "provider": item.get("provider", "feed"), "external_id": item.get("external_id", ""),
+            "license_type": item.get("license_type", ""), "license_ref": item.get("license_ref", ""),
+            "upstream_repo": item.get("upstream_repo", ""), "commit_sha": item.get("commit_sha", ""),
+            "license_file": item.get("license_file", ""), "license_sha256": item.get("license_sha256", ""),
+            "proof_url": item.get("proof_url", ""), "invoice_ref": item.get("invoice_ref", ""),
+            "allow_origins": item.get("allow_origins", ""),
+            "attribution_required": int(item.get("attribution_required", 0)),
+            "attribution_html": item.get("attribution_html"), "captured_at": item.get("captured_at"),
+            "expires_at": item.get("expires_at"), "status": item.get("status", "active"),
+        }
+
+    def ingest(self, provider: str, feed_url: str, items: list[dict], at: str = TODAY + " 12:00:00",
+               resolver=None) -> dict:
+        verdict = guard_inspect(feed_url, resolver)
+        cur = self.conn.execute(SQL_RUN_OPEN, (provider, "refused" if not verdict["ok"] else "running",
+                                               0, 0, 0, at))
+        run_id = cur.lastrowid
+        if not verdict["ok"]:
+            self.conn.execute(SQL_RUN_CLOSE, ("refused", 0, 0, 0,
+                                              json.dumps({"feed_url": feed_url, "refused": verdict["reason"]}),
+                                              at, run_id))
+            return {"ok": False, "reason": verdict["reason"], "provider": provider,
+                    "seen": 0, "new": 0, "rejected": 0, "accepted": 0, "rejections": []}
+        seen = new = rejected = accepted = 0
+        rejections = []
+        for item in items:
+            seen += 1
+            missing = [f for f in FEED_REQUIRED_ITEM if not str(item.get(f) or "").strip()]
+            external_id = str(item.get("external_id") or "")[:64]
+            row = self.conn.execute(SQL_LOOKUP, (provider, external_id)).fetchone()
+            payload = json.dumps(item, ensure_ascii=False)
+            if row is None:
+                new += 1
+                self.conn.execute(SQL_STORE, (provider, external_id, payload, at))
+            else:
+                self.conn.execute(SQL_REFRESH, (payload, at, row[0]))
+            if missing:
+                rejected += 1
+                rejections.append({"external_id": external_id, "reasons": missing})
+                continue
+            decision = self.policy.decide([self.license_row(item)], "dynamic")
+            if not decision["ok"]:
+                rejected += 1
+                rejections.append({"external_id": external_id, "reasons": decision["reasons"]})
+                continue
+            accepted += 1
+        self.conn.execute(SQL_RUN_CLOSE, ("ok", seen, new, rejected,
+                                          json.dumps({"feed_url": feed_url, "rejections": rejections}),
+                                          at, run_id))
+        return {"ok": True, "reason": "", "provider": provider, "seen": seen, "new": new,
+                "rejected": rejected, "accepted": accepted, "rejections": rejections}
+
+
+# (url, expected reason) — every bypass a naive guard misses, and the two that must be allowed
+HOSTILE_URLS = [
+    ("http://169.254.169.254/latest/meta-data/iam/security-credentials/", "ip_blocked"),
+    ("http://127.0.0.1/feed.json", "ip_blocked"),
+    ("http://127.1/feed.json", "ip_blocked"),
+    ("http://2130706433/feed.json", "ip_blocked"),
+    ("http://0x7f000001/feed.json", "ip_blocked"),
+    ("http://0177.0.0.1/feed.json", "ip_blocked"),
+    ("http://[::1]/feed.json", "ip_blocked"),
+    ("http://[::ffff:127.0.0.1]/feed.json", "ip_blocked"),
+    ("http://0.0.0.0/feed.json", "ip_blocked"),
+    ("http://10.1.2.3/feed.json", "ip_blocked"),
+    ("http://192.168.1.1/feed.json", "ip_blocked"),
+    ("http://172.16.9.9/feed.json", "ip_blocked"),
+    ("http://100.64.0.1/feed.json", "ip_blocked"),
+    ("http://[fc00::1]/feed.json", "ip_blocked"),
+    ("http://[fe80::1]/feed.json", "ip_blocked"),
+    ("file:///etc/passwd", "scheme_not_allowed"),
+    ("gopher://example.org:70/_GET", "scheme_not_allowed"),
+    ("php://input", "scheme_not_allowed"),
+    ("http://admin@10.0.0.5/feed.json", "userinfo_not_allowed"),
+    ("http://example.org:3306/feed.json", "port_not_allowed"),
+    ("http://localhost/feed.json", "host_blocked"),
+    ("http://db.internal/feed.json", "host_blocked"),
+    ("http://printer.local/feed.json", "host_blocked"),
+]
+
+
+def proof_e() -> None:
+    print("E · providers: the SSRF guard, the OSS pack gate and feed ingestion")
+
+    # --- E1: nothing reserved is fetchable, in any encoding
+    for url, expected in HOSTILE_URLS:
+        got = guard_inspect(url)
+        check(f"guard refuses {url[:46]}", got["ok"] is False and got["reason"] == expected,
+              f"got {got['reason']}")
+    for url in ["https://games.example.org/feed.json", "http://93.184.216.34/feed.json"]:
+        got = guard_inspect(url)
+        check(f"guard allows {url}", got["ok"] is True, str(got))
+    internal = guard_inspect("http://feeds.example.org/feed.json", resolver=lambda h: ["10.0.0.5"])
+    check("guard refuses a public name that resolves inward", internal["reason"] == "dns_blocked", str(internal))
+    mixed = guard_inspect("http://feeds.example.org/feed.json", resolver=lambda h: ["93.184.216.34", "127.0.0.1"])
+    check("one inward answer poisons the whole name", mixed["reason"] == "dns_blocked", str(mixed))
+    dead = guard_inspect("http://nowhere.example.org/feed.json", resolver=lambda h: [])
+    check("an unresolvable name is refused, not fetched", dead["reason"] == "unresolvable", str(dead))
+    check("no blocked range is missing from either list",
+          len(BLOCKED_V4) == 15 and len(BLOCKED_V6) == 8,
+          f"v4={len(BLOCKED_V4)} v6={len(BLOCKED_V6)}")
+
+    # --- E2: the OSS pack gate, on the file that actually ships
+    policy = Policy(json.loads((ROOT / "db" / "license_rules.json").read_text(encoding="utf-8")))
+    pack = Pack(json.loads((ROOT / "db" / "oss_pack.json").read_text(encoding="utf-8")), policy)
+    report = pack.verify_all()
+    by_slug = {r["slug"]: r for r in report["entries"]}
+    check("the shipped pack is 3 accepted / 3 rejected",
+          (report["accepted"], report["rejected"]) == (3, 3),
+          f"accepted={report['accepted']} rejected={report['rejected']}")
+    for slug in ("neon-racer", "pixel-jumper", "star-sweeper"):
+        check(f"pack accepts {slug}", by_slug[slug]["ok"] is True, str(by_slug[slug]))
+    check("pack rejects an entry with no licence hash",
+          by_slug["ghost-maze"]["verdict"] == "incomplete"
+          and by_slug["ghost-maze"]["missing"] == ["license_sha256"], str(by_slug["ghost-maze"]))
+    check("pack rejects a single-site licence in export mode",
+          by_slug["turbo-drift"]["reasons"] == ["no_redistribution"], str(by_slug["turbo-drift"]["reasons"]))
+    check("pack rejects an unknown licence type",
+          by_slug["void-runner"]["reasons"] == ["unknown_license_type"], str(by_slug["void-runner"]["reasons"]))
+    check("pack attribution survives for cc-by",
+          policy.attribution(pack.license_row(pack.doc["entries"][1])) is not None)
+
+    # --- E3: feed ingestion, on a real database
+    conn = fresh_conn()
+    conn.executescript((ROOT / "db" / "schema.sqlite.sql").read_text(encoding="utf-8"))
+    feed = Feed(conn, policy)
+    items = [
+        {"external_id": "gd-1", "title_en": "Neon Racer", "license_type": "mit", "license_ref": "MIT",
+         "commit_sha": "9" * 40, "license_file": "LICENSE", "license_sha256": "a" * 64,
+         "proof_url": "https://git.example/gd-1", "captured_at": TODAY,
+         "attribution_required": 1, "attribution_html": "Neon Racer © its authors, MIT"},
+        {"external_id": "gd-2", "title_en": "Ghost Maze", "license_type": "cc-by", "license_ref": "CC BY 4.0",
+         "proof_url": "https://git.example/gd-2", "captured_at": TODAY},
+        {"external_id": "gd-3", "title_en": "No Licence", "license_type": "beerware"},
+        {"external_id": "", "title_en": "No Id", "license_type": "own"},
+    ]
+    res = feed.ingest("gamedistribution", "https://api.example.org/feed.json", items, resolver=lambda h: ["93.184.216.34"])
+    check("a clean feed is accepted with the unlicensed items rejected",
+          res["ok"] is True and res["seen"] == 4 and res["accepted"] == 1 and res["rejected"] == 3,
+          f"seen={res['seen']} accepted={res['accepted']} rejected={res['rejected']}")
+    check("feed items land in provider_games once",
+          conn.execute("SELECT COUNT(*) FROM provider_games").fetchone()[0] == 4)
+    check("a feed item without a licence is rejected with a reason",
+          any(r["external_id"] == "gd-2" and "missing_license_file" in r["reasons"] for r in res["rejections"]),
+          str(res["rejections"]))
+    check("a feed item with an unknown type is rejected",
+          any(r["external_id"] == "gd-3" and r["reasons"] == ["unknown_license_type"] for r in res["rejections"]))
+    check("a feed item with no external_id is rejected",
+          any(r["external_id"] == "" and r["reasons"] == ["external_id"] for r in res["rejections"]))
+
+    again = feed.ingest("gamedistribution", "https://api.example.org/feed.json", items, resolver=lambda h: ["93.184.216.34"])
+    check("re-running the same feed inserts nothing new", again["new"] == 0 and again["seen"] == 4,
+          f"new={again['new']}")
+    check("re-running still leaves one row per item",
+          conn.execute("SELECT COUNT(*) FROM provider_games").fetchone()[0] == 4)
+    dupes = conn.execute(
+        "SELECT provider, external_id, COUNT(*) c FROM provider_games GROUP BY provider, external_id HAVING c > 1"
+    ).fetchall()
+    check("(provider, external_id) stays unique across re-runs", dupes == [], str(dupes))
+
+    refused = feed.ingest("gamedistribution", "http://169.254.169.254/latest/meta-data/", items)
+    check("a feed URL aimed at the metadata endpoint is refused before any fetch",
+          refused["ok"] is False and refused["reason"] == "ip_blocked", str(refused["reason"]))
+    runs = conn.execute("SELECT status, rows_seen, rows_rejected FROM provider_runs ORDER BY id").fetchall()
+    check("every run is recorded in provider_runs, including the refusal",
+          [r[0] for r in runs] == ["ok", "ok", "refused"], str(runs))
+    check("the refusal wrote down why",
+          "ip_blocked" in (conn.execute("SELECT detail FROM provider_runs WHERE status = 'refused'").fetchone()[0] or ""))
+
+
 
 def main() -> int:
     proof_a()
     proof_b()
     proof_c()
     proof_d()
+    proof_e()
     print()
     if FAILURES:
         print(f"✗ {len(FAILURES)}/{CHECKS} checks failed:")
         for f in FAILURES:
             print(f"   - {f}")
         return 1
-    print(f"✓ all {CHECKS} runtime checks hold · schema, migrations, the 8 boards and the licence gate behave")
+    print(f"✓ all {CHECKS} runtime checks hold · schema, migrations, the 8 boards, the licence gate and the providers behave")
     return 0
 
 
