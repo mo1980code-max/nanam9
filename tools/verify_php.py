@@ -20,6 +20,8 @@ What it checks (each was proven non-vacuous by injecting a bug and watching exit
   6. migrations        — db/migrations.json parses; the highest version equals
                          Migrator::CURRENT; every step has both dialect lists.
   7. JS bridge         — ca-compat.js only references the eight documented leaderboard types.
+ 11. autoload/require  — every class sits where PSR-4 will look for it and every resolvable
+                         require points at a file that exists (both fatal only at request time).
  10. install + export  — the installer's SQL is the SQL the runtime proof executes, a refused game
                          produces no exported file, and every SELECT names a real column.
   9. providers         — the reserved-range lists, the required-field lists and the feed SQL in
@@ -432,14 +434,17 @@ def main() -> int:
         # 8b · one finding vocabulary on both sides
         php_policy = (SRC / "Licensing" / "LicensePolicy.php").read_text(encoding="utf-8")
         block = re.search(r"const\s+CODES\s*=\s*\[(.*?)\];", php_policy, re.S)
-        codes = re.findall(r"'([a-z0-9_]+)'", block.group(1)) if block else []
+        # Named finding_codes, not codes: `codes` is the path->stripped-source mapping built at the
+        # top of main(), and rebinding it here silently turned a later `codes[path]` into a list
+        # index. Section 11 hit exactly that.
+        finding_codes = re.findall(r"'([a-z0-9_]+)'", block.group(1)) if block else []
         labels = set(policy.get("finding_labels", {}))
-        check("LicensePolicy::CODES parsed", bool(codes), "const CODES not found")
-        check("every CODES entry is labelled in the policy", set(codes) <= labels,
-              str(sorted(set(codes) - labels)))
-        check("every policy label is used by LicensePolicy", labels <= set(codes),
-              str(sorted(labels - set(codes))))
-        unreachable = [c for c in codes
+        check("LicensePolicy::CODES parsed", bool(finding_codes), "const CODES not found")
+        check("every CODES entry is labelled in the policy", set(finding_codes) <= labels,
+              str(sorted(set(finding_codes) - labels)))
+        check("every policy label is used by LicensePolicy", labels <= set(finding_codes),
+              str(sorted(labels - set(finding_codes))))
+        unreachable = [c for c in finding_codes
                        if f"'{c}'" not in all_src
                        and not (c.startswith(("missing_", "bad_"))
                                 and "'" + c.split("_")[0] + "_' ." in all_src)]
@@ -686,6 +691,99 @@ def main() -> int:
           "->evaluate(" not in admin and "->decide(" not in admin and "new LicensePolicy" not in admin)
     check("the admin ledger reads the audit table", "FROM license_audits" in admin)
 
+
+
+    # -- 11: autoload + require resolution -------------------------------------------------
+    # Without a PHP runtime these two failure modes are invisible to every other check, and both
+    # are fatal at the first request: a class that does not sit where PSR-4 will look for it, and
+    # a require path that does not exist. Neither is hypothetical — public/index.php and both bin
+    # scripts were added in the same batch, and a typo in either is a white screen, not a warning.
+    print("\n  11 · autoload and require paths")
+    composer_doc = json.loads((ROOT / "composer.json").read_text(encoding="utf-8"))
+    psr4 = composer_doc.get("autoload", {}).get("psr-4", {})
+    check("composer.json declares one PSR-4 prefix", list(psr4) == ["Nawras\\"], str(list(psr4)))
+    psr4_dir = ROOT / str(psr4.get("Nawras\\" "")).rstrip("/")
+    check("the PSR-4 directory exists", psr4_dir.is_dir(), str(psr4_dir))
+
+    psr4_bad = []
+    for path in files:
+        ns = re.search(r"namespace\s+([\w\\]+);", codes[path])
+        if not ns or not str(ns.group(1)).startswith("Nawras"):
+            continue
+        rel = ns.group(1)[len("Nawras"):].lstrip("\\").replace("\\", "/")
+        for cls in re.findall(r"(?:final\s+)?(?:abstract\s+)?class\s+(\w+)", codes[path]):
+            expected = (psr4_dir / rel / f"{cls}.php").resolve() if rel else (psr4_dir / f"{cls}.php").resolve()
+            if expected != path.resolve():
+                psr4_bad.append(f"{cls} is in {path.relative_to(ROOT)} but PSR-4 looks in "
+                                f"{expected.relative_to(ROOT)}")
+    check("every Nawras class sits where its namespace says", not psr4_bad, str(psr4_bad))
+
+    def resolve_php_path(expr: str, here: Path) -> Path | None:
+        """Evaluates the subset of path expressions this codebase actually uses."""
+        expr = expr.strip()
+
+        # Split on "." only outside quotes: a plain split cut '/autoload.php' at its own dot, so
+        # every require in this codebase became unresolvable and the check reported "0 seen" —
+        # a green line that proved nothing.
+        parts, cur, quote = [], "", None
+        for ch in expr:
+            if quote:
+                cur += ch
+                if ch == quote:
+                    quote = None
+                continue
+            if ch in "'\"":
+                quote = ch
+                cur += ch
+                continue
+            if ch == ".":
+                parts.append(cur)
+                cur = ""
+                continue
+            cur += ch
+        if cur.strip():
+            parts.append(cur)
+        parts = [x.strip() for x in parts]
+
+        out: Path | None = None
+        for part in parts:
+            m = re.fullmatch(r"__DIR__", part)
+            if m:
+                out = here.parent
+                continue
+            m = re.fullmatch(r"\\?dirname\(\s*__DIR__\s*(?:,\s*(\d+)\s*)?\)", part)
+            if m:
+                # __DIR__ is the file's own directory, so dirname(__DIR__) is one level ABOVE it:
+                # dirname(__DIR__, N) climbs N levels from here.parent. Getting this off by one
+                # reported three healthy requires as missing.
+                levels = int(m.group(1) or 1)
+                out = here.parent
+                for _ in range(levels):
+                    out = out.parent
+                continue
+            m = re.fullmatch(r"'([^']*)'", part) or re.fullmatch(r'"([^"]*)"', part)
+            if m and out is not None:
+                out = (out / m.group(1).lstrip("/")) if m.group(1).startswith("/") else out / m.group(1)
+                continue
+            return None          # a variable or constant we cannot resolve: skip, do not guess
+        return out
+
+    require_missing, require_seen = [], 0
+    for path in list(files) + [ROOT / "public" / "index.php"]:
+        if not path.is_file():
+            continue
+        raw_here = path.read_text(encoding="utf-8")
+        for m in re.finditer(r"\brequire(?:_once)?\s+([^;]+);", raw_here):
+            target = resolve_php_path(m.group(1), path)
+            if target is None:
+                continue
+            require_seen += 1
+            if not target.is_file():
+                require_missing.append(f"{path.relative_to(ROOT)} -> {target}")
+    check(f"every resolvable require points at a real file ({require_seen} seen)",
+          not require_missing, str(require_missing))
+    check("the front controller and both bin scripts exist",
+          all((ROOT / f).is_file() for f in ("public/index.php", "bin/install.php", "bin/export.php")))
 
     print()
     if FAILURES:
