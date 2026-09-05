@@ -438,6 +438,10 @@ class Handler(BaseHTTPRequestHandler):
             self._html((ROOT / "demo" / "portal.html").read_text(encoding="utf-8"))
             return
 
+        if u.path == "/admin":
+            self._html((ROOT / "demo" / "admin.html").read_text(encoding="utf-8"))
+            return
+
         if u.path == "/demo":
             self._html((ROOT / "demo" / "demo.html").read_text(encoding="utf-8"))
             return
