@@ -497,11 +497,11 @@ class Handler(BaseHTTPRequestHandler):
             self._write(body)
             return
 
-        if u.path == "/store":
+        if u.path == "/" or u.path == "/store":
             self._html((ROOT / "demo" / "store.html").read_text(encoding="utf-8"))
             return
 
-        if u.path == "/" or u.path == "/portal":
+        if u.path == "/portal" or u.path == "/arcade":
             self._html((ROOT / "demo" / "portal.html").read_text(encoding="utf-8"))
             return
 
