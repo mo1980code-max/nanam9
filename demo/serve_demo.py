@@ -10,10 +10,14 @@ and reports the live gate output. Zero dependencies.
 """
 from __future__ import annotations
 
+import cgi
 import json
 import mimetypes
 import re
+import secrets
+import shutil
 import sqlite3
+import zipfile
 import subprocess
 import sys
 import tempfile
@@ -241,14 +245,43 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": False, "error": "not found"}, 404)
             return
         try:
-            length = min(int(self.headers.get("Content-Length", "0")), 10000)
-            data = json.loads(self.rfile.read(length) or b"{}")
-            title = str(data.get("title", "")).strip()
-            category = str(data.get("category", "")).strip()
-            url = str(data.get("url", "")).strip()
-            if not title or not category or not re.match(r"^https?://", url):
-                raise ValueError("title, category and a valid http(s) URL are required")
-            item = {"title": title, "category": category, "url": url}
+            content_type = self.headers.get("Content-Type", "")
+            if content_type.startswith("multipart/form-data"):
+                form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})
+                title = str(form.getfirst("title", "")).strip()
+                category = str(form.getfirst("category", "")).strip()
+                upload = form["game_file"] if "game_file" in form else None
+                if not title or not category or upload is None or not getattr(upload, "file", None):
+                    raise ValueError("title, category and a ZIP game file are required")
+                slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or secrets.token_hex(4)
+                destination = ROOT / "var" / "uploads" / slug
+                if destination.exists():
+                    raise ValueError("a game with this name already exists")
+                destination.mkdir(parents=True)
+                with zipfile.ZipFile(upload.file) as archive:
+                    members = [m for m in archive.infolist() if not m.is_dir()]
+                    if len(members) > 500 or sum(m.file_size for m in members) > 25 * 1024 * 1024:
+                        raise ValueError("ZIP exceeds the demo limits")
+                    for member in members:
+                        target = (destination / member.filename).resolve()
+                        if not str(target).startswith(str(destination.resolve()) + "/"):
+                            raise ValueError("unsafe ZIP path")
+                    for member in members:
+                        archive.extract(member, destination)
+                entry = "index.html" if (destination / "index.html").is_file() else "index.htm"
+                if not (destination / entry).is_file():
+                    shutil.rmtree(destination, ignore_errors=True)
+                    raise ValueError("ZIP must contain index.html or index.htm at its root")
+                item = {"title": title, "category": category, "url": f"/uploads/{slug}/{entry}", "slug": slug}
+            else:
+                length = min(int(self.headers.get("Content-Length", "0")), 10000)
+                data = json.loads(self.rfile.read(length) or b"{}")
+                title = str(data.get("title", "")).strip()
+                category = str(data.get("category", "")).strip()
+                url = str(data.get("url", "")).strip()
+                if not title or not category or not re.match(r"^https?://", url):
+                    raise ValueError("title, category and a valid http(s) URL are required")
+                item = {"title": title, "category": category, "url": url}
             path = ROOT / "var" / "demo-games.json"
             path.parent.mkdir(exist_ok=True)
             items = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
@@ -492,6 +525,22 @@ class Handler(BaseHTTPRequestHandler):
                             ("underrun", "أندرَّان"), ("clumsy-bird", "الطائر الأخرق"),
                             ("hexgl", "هكس جي إل")] if g[0] == slug), slug)
             self._html(f'''<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title} · نورس جيمز</title><style>body{{margin:0;background:#080b16;color:#fff;font-family:Tahoma,Arial}}header{{height:58px;display:flex;align-items:center;gap:18px;padding:0 22px;background:#11172a}}header a{{color:#b8ffed;text-decoration:none}}iframe{{display:block;width:100%;height:calc(100vh - 58px);border:0;background:#fff}}</style></head><body><header><a href="/">← العودة للألعاب</a><strong>{title}</strong><span>لعبة مفتوحة المصدر</span></header><iframe src="/games/{slug}/{entry}" allowfullscreen></iframe></body></html>''')
+            return
+
+        uploads = re.match(r"^/uploads/([a-z0-9-]+)/(.*)$", u.path)
+        if uploads:
+            slug, rel = uploads.groups()
+            upload_root = (ROOT / "var" / "uploads" / slug).resolve()
+            target = (upload_root / rel).resolve()
+            if not str(target).startswith(str(upload_root) + "/") or not target.is_file():
+                self._json({"ok": False, "error": "uploaded asset not found"}, 404)
+                return
+            body = target.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", mimetypes.guess_type(str(target))[0] or "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self._write(body)
             return
 
         static = re.match(r"^/games/([a-z0-9-]+)/(.*)$", u.path)
