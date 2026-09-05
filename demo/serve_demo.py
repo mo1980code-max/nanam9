@@ -235,9 +235,39 @@ class Handler(BaseHTTPRequestHandler):
         if not getattr(self, "_head_only", False):
             self.wfile.write(body)
 
+    def do_POST(self):
+        u = urlparse(self.path)
+        if u.path != "/api/catalog":
+            self._json({"ok": False, "error": "not found"}, 404)
+            return
+        try:
+            length = min(int(self.headers.get("Content-Length", "0")), 10000)
+            data = json.loads(self.rfile.read(length) or b"{}")
+            title = str(data.get("title", "")).strip()
+            category = str(data.get("category", "")).strip()
+            url = str(data.get("url", "")).strip()
+            if not title or not category or not re.match(r"^https?://", url):
+                raise ValueError("title, category and a valid http(s) URL are required")
+            item = {"title": title, "category": category, "url": url}
+            path = ROOT / "var" / "demo-games.json"
+            path.parent.mkdir(exist_ok=True)
+            items = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+            items.append(item)
+            path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+            self._json({"ok": True, "game": item, "count": len(items)}, 201)
+        except (ValueError, json.JSONDecodeError) as exc:
+            self._json({"ok": False, "error": str(exc)}, 422)
+        return
+
     def do_GET(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
+
+        if u.path == "/api/catalog":
+            path = ROOT / "var" / "demo-games.json"
+            items = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+            self._json({"ok": True, "games": items, "count": len(items)})
+            return
 
         if u.path == "/api/leaderboard":
             type_ = (q.get("type") or ["top-week"])[0]
