@@ -185,6 +185,8 @@ export type Comment = {
   likesCount?: number;
 };
 
+export type PaginationMeta = { page?: number; perPage?: number; total?: number; totalPages?: number; hasNext?: boolean; hasPrev?: boolean };
+
 export type ListResult<T> = { items: T[]; total: number; page: number; perPage: number; totalPages: number };
 
 export type Settings = Record<string, unknown>;
@@ -209,7 +211,19 @@ type FetchOptions = { revalidate?: number; tags?: string[] };
  * Wrapped in React's per-request cache so a page that needs the same rail twice
  * (the header nav and a section, say) pays for it once.
  */
+type Envelope<T> = { ok: boolean; data: T; meta?: { pagination?: PaginationMeta } };
+
 async function getJson<T>(path: string, options: FetchOptions = {}): Promise<T | null> {
+  const envelope = await getEnvelope<T>(path, options);
+  return envelope?.data ?? null;
+}
+
+/**
+ * The full envelope, including the top-level `meta.pagination` block the API puts
+ * *beside* `data`, not inside it. List fetchers need it: without `total` and
+ * `totalPages` every paginated page would believe it has exactly one page.
+ */
+async function getEnvelope<T>(path: string, options: FetchOptions = {}): Promise<Envelope<T> | null> {
   const url = `${API_ORIGIN}/api${path.startsWith('/') ? path : `/${path}`}`;
   try {
     const response = await fetch(url, {
@@ -220,23 +234,27 @@ async function getJson<T>(path: string, options: FetchOptions = {}): Promise<T |
       if (response.status >= 500) console.error(`[api] ${path} → ${response.status}`);
       return null;
     }
-    const payload = (await response.json()) as { ok: boolean; data: T };
-    return payload.ok ? payload.data : null;
+    const payload = (await response.json()) as Envelope<T>;
+    return payload.ok ? payload : null;
   } catch (error) {
     console.error(`[api] ${path} unreachable:`, (error as Error).message);
     return null;
   }
 }
 
-function unwrapList<T>(data: unknown, fallbackPage: { page: number; perPage: number }): ListResult<T> {
+function unwrapList<T>(
+  data: unknown,
+  fallbackPage: { page: number; perPage: number },
+  meta?: { pagination?: PaginationMeta },
+): ListResult<T> {
   const items = Array.isArray(data) ? (data as T[]) : ((data as { items?: T[] })?.items ?? []);
-  const meta = (data as { total?: number; page?: number; perPage?: number; totalPages?: number }) ?? {};
+  const p = meta?.pagination ?? (Array.isArray(data) ? undefined : (data as { pagination?: PaginationMeta })?.pagination) ?? {};
   return {
     items,
-    total: meta.total ?? items.length,
-    page: meta.page ?? fallbackPage.page,
-    perPage: meta.perPage ?? fallbackPage.perPage,
-    totalPages: meta.totalPages ?? Math.max(1, Math.ceil((meta.total ?? items.length) / (meta.perPage ?? fallbackPage.perPage))),
+    total: p.total ?? items.length,
+    page: p.page ?? fallbackPage.page,
+    perPage: p.perPage ?? fallbackPage.perPage,
+    totalPages: p.totalPages ?? Math.max(1, Math.ceil((p.total ?? items.length) / (p.perPage ?? fallbackPage.perPage))),
   };
 }
 
@@ -326,7 +344,7 @@ export type GameQuery = {
 export const listGames = cache(async (query: GameQuery = {}): Promise<ListResult<GameCard>> => {
   const page = query.page ?? 1;
   const perPage = query.perPage ?? 24;
-  const data = await getJson<unknown>(
+  const envelope = await getEnvelope<unknown>(
     `/games${qs({
       page,
       perPage,
@@ -340,7 +358,7 @@ export const listGames = cache(async (query: GameQuery = {}): Promise<ListResult
     })}`,
     { revalidate: 30, tags: ['games'] },
   );
-  return unwrapList<GameCard>(data, { page, perPage });
+  return unwrapList<GameCard>(envelope?.data, { page, perPage }, envelope?.meta);
 });
 
 export const getGame = cache(async (slug: string): Promise<GamePage | null> =>
@@ -348,18 +366,18 @@ export const getGame = cache(async (slug: string): Promise<GamePage | null> =>
 );
 
 export const searchGames = cache(async (term: string, limit = 8): Promise<GameCard[]> => {
-  const data = await getJson<unknown>(`/games/search${qs({ q: term, perPage: limit })}`, { revalidate: 0 });
-  return unwrapList<GameCard>(data, { page: 1, perPage: limit }).items;
+  const envelope = await getEnvelope<unknown>(`/games/search${qs({ q: term, perPage: limit })}`, { revalidate: 0 });
+  return unwrapList<GameCard>(envelope?.data, { page: 1, perPage: limit }, envelope?.meta).items;
 });
 
 export const randomGames = cache(async (limit = 6, category?: string): Promise<GameCard[]> => {
-  const data = await getJson<unknown>(`/games/random${qs({ limit, category })}`, { revalidate: 0 });
-  return unwrapList<GameCard>(data, { page: 1, perPage: limit }).items;
+  const envelope = await getEnvelope<unknown>(`/games/random${qs({ limit, category })}`, { revalidate: 0 });
+  return unwrapList<GameCard>(envelope?.data, { page: 1, perPage: limit }, envelope?.meta).items;
 });
 
 export const getTags = cache(async (limit = 40): Promise<(Term & { count?: number })[]> => {
-  const data = await getJson<unknown>(`/tags${qs({ limit })}`, { revalidate: 600 });
-  return unwrapList<Term & { count?: number }>(data, { page: 1, perPage: limit }).items;
+  const envelope = await getEnvelope<unknown>(`/tags${qs({ limit })}`, { revalidate: 600 });
+  return unwrapList<Term & { count?: number }>(envelope?.data, { page: 1, perPage: limit }, envelope?.meta).items;
 });
 
 export type LeaderRow = {
@@ -374,8 +392,8 @@ export type LeaderRow = {
 };
 
 export const getLeaderboard = cache(async (limit = 8): Promise<LeaderRow[]> => {
-  const data = await getJson<unknown>(`/leaderboard${qs({ limit })}`, { revalidate: 120 });
-  return unwrapList<LeaderRow>(data, { page: 1, perPage: limit }).items;
+  const envelope = await getEnvelope<unknown>(`/leaderboard${qs({ limit })}`, { revalidate: 120 });
+  return unwrapList<LeaderRow>(envelope?.data, { page: 1, perPage: limit }, envelope?.meta).items;
 });
 
 export const getUserProfile = cache(async (username: string): Promise<Record<string, unknown> | null> =>
@@ -390,11 +408,11 @@ export const listPosts = cache(
   > => {
     const page = query.page ?? 1;
     const perPage = query.perPage ?? 12;
-    const data = await getJson<unknown>(`/blog/posts${qs({ page, perPage, category: query.category, tag: query.tag, q: query.q, sort: query.sort })}`, {
+    const envelope = await getEnvelope<unknown>(`/blog/posts${qs({ page, perPage, category: query.category, tag: query.tag, q: query.q, sort: query.sort })}`, {
       revalidate: 60,
       tags: ['posts'],
     });
-    return unwrapList<PostCard>(data, { page, perPage });
+    return unwrapList<PostCard>(envelope?.data, { page, perPage }, envelope?.meta);
   },
 );
 
@@ -417,8 +435,8 @@ export const getLivePages = cache(async (): Promise<{ slug: string; title: strin
 });
 
 export const getComments = cache(async (gameId: string, limit = 20): Promise<Comment[]> => {
-  const data = await getJson<unknown>(`/comments${qs({ gameId, limit })}`, { revalidate: 0 });
-  return unwrapList<Comment>(data, { page: 1, perPage: limit }).items;
+  const envelope = await getEnvelope<unknown>(`/comments${qs({ gameId, limit })}`, { revalidate: 0 });
+  return unwrapList<Comment>(envelope?.data, { page: 1, perPage: limit }, envelope?.meta).items;
 });
 
 // ── SEO helpers ────────────────────────────────────────────────────────────
