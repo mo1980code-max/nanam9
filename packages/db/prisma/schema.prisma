@@ -1268,7 +1268,12 @@ model ActivityLog {
   actorId    String?  @map("actor_id") @db.VarChar(30)
   actorLabel String?  @map("actor_label") @db.VarChar(120)
   action     String   @db.VarChar(80)
-  targetKind TargetKind? @map("target_kind")
+  /// Free text on purpose. An audit row must never be rejected for naming an entity
+  /// kind the enum has not heard of yet — a closed enum here turned every category,
+  /// tag and playlist audit write into a silent failure (see migration
+  /// 20260906150000). `Like` and `Report` keep the enum because there the set of
+  /// kinds is a real domain constraint that code switches on.
+  targetKind String?  @map("target_kind") @db.VarChar(40)
   targetId   String?  @map("target_id") @db.VarChar(30)
   before     Json?
   after      Json?

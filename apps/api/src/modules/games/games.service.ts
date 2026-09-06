@@ -417,6 +417,27 @@ export class GamesService {
     return createGamePresenter(meta.locale, this.config.apiPublicUrl);
   }
 
+  /**
+   * Resolve a slug-or-id reference to a game row. Sibling modules (social,
+   * playlists, billing, imports) all accept "the thing in the URL" and must resolve
+   * it with the SAME publication rules — a private helper per module is how a
+   * playlist ends up containing an archived game.
+   */
+  async resolve(ref: string, options: { publishedOnly?: boolean } = {}): Promise<GameRow> {
+    if (options.publishedOnly === false) {
+      const row = (await this.db.catalog.findGameBySlug(ref, false)) ?? (await this.db.catalog.findGameById(ref, false));
+      if (!row) throw new AppError('game.not_found', `no game matching "${ref}"`, 404);
+      return row;
+    }
+    return this.findPlayable(ref);
+  }
+
+  /** Present rows as public cards — the shape every list endpoint returns. */
+  cards(meta: RequestMeta, rows: GameRow[]): GameCard[] {
+    const presenter = this.presenter(meta);
+    return rows.map((row) => presenter.card(row));
+  }
+
   private notFound(slug: string): AppError {
     return new AppError('game.not_found', `no published game with the slug "${slug}"`, 404);
   }

@@ -245,12 +245,24 @@ export const TOKEN_TTL = {
 
 /** Rate limits: [window seconds, max requests]. Login is the tightest because
  *  it is the only endpoint where an attacker gains by brute force. */
+/**
+ * Fixed-window budgets. Windows are keyed by user id once a request is
+ * authenticated (the rate-limit guard runs *after* the auth guard) and by IP
+ * otherwise, so one noisy member can never exhaust a whole household's budget.
+ */
 export const RATE_LIMITS = {
   global: { windowSeconds: 60, max: 300 },
+  /** Sign-ups and OAuth starts: per IP, because there is no user yet. */
   auth: { windowSeconds: 60, max: 10 },
+  /** Password logins get their own tighter budget — this is the brute-force wall. */
   login: { windowSeconds: 300, max: 8 },
   write: { windowSeconds: 60, max: 30 },
-  comment: { windowSeconds: 300, max: 10 },
+  /**
+   * Comments are per-user over five minutes. 20 is generous enough for a lively
+   * thread but still caps a compromised account; guests are additionally
+   * pre-moderated and IP-fingerprinted, so the ceiling is not the only defence.
+   */
+  comment: { windowSeconds: 300, max: 20 },
   play: { windowSeconds: 60, max: 60 },
   search: { windowSeconds: 60, max: 60 },
   import: { windowSeconds: 3600, max: 12 },

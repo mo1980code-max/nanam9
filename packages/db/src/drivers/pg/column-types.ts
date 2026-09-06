@@ -3,7 +3,7 @@
  *
  * GENERATED from prisma/schema.prisma — regenerate with `npm run columns:generate`
  * in @voltade/db, never edit by hand (`columns:generate --check` fails CI on drift).
- * 14 jsonb · 3 array · 39 enum columns.
+ * 14 jsonb · 3 array · 38 enum columns.
  *
  * WHY THIS EXISTS: node-postgres serialises a JS array as a Postgres array
  * literal (`{a,b}`) and a JS object as `[object Object]`. For a `text[]` column
@@ -40,7 +40,6 @@ export const ARRAY_COLUMNS: Record<string, readonly string[]> = {
 /** Enum columns per table → Postgres type name, for explicit `::type` casts. */
 export const ENUM_COLUMNS: Record<string, Record<string, string>> = {
   "achievements": {"tier":"badge_tier"},
-  "activity_logs": {"target_kind":"target_kind"},
   "ads": {"placement":"ad_placement","type":"ad_type","status":"ad_status"},
   "backups": {"kind":"backup_kind","status":"backup_status"},
   "blog_posts": {"status":"content_status"},

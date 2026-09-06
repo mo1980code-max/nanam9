@@ -50,10 +50,23 @@ import { TokenService } from '../modules/auth/token.service.js';
     { provide: CONFIG, useFactory: () => getConfig() },
     RedisService,
     TokenService,
-    { provide: APP_GUARD, useClass: RateLimitGuard },
-    { provide: APP_GUARD, useClass: AuthGuard },
-    { provide: APP_GUARD, useClass: PermissionsGuard },
+    // Order matters, and it is the whole point of the comment below.
+    //  1. CSRF   — cheapest check, and it rejects forged cross-site writes before
+    //              we spend a session lookup on them;
+    //  2. Auth   — resolves req.user (also on @Public routes, so a signed-in
+    //              visitor gets their favourites/votes in the same response);
+    //  3. RateLimit — MUST come after Auth: the bucket key is the user id when
+    //              there is one and the IP otherwise. Before this ordering the
+    //              limiter always saw req.user === undefined, so every player
+    //              behind one NAT or one office shared a single 10-comments-per-
+    //              5-minutes bucket — the exact failure mode the guard documents
+    //              that it avoids, and one that shows up as "the site is broken"
+    //              for whole schools and internet cafés.
+    //  4. Permissions — needs the resolved role.
     { provide: APP_GUARD, useClass: CsrfGuard },
+    { provide: APP_GUARD, useClass: AuthGuard },
+    { provide: APP_GUARD, useClass: RateLimitGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],

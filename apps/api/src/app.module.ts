@@ -22,6 +22,8 @@ import { AuthModule } from './modules/auth/auth.module.js';
 import { GamesModule } from './modules/games/games.module.js';
 import { GamificationModule } from './modules/gamification/gamification.module.js';
 import { HealthModule } from './modules/health/health.module.js';
+import { TaxonomyModule } from './modules/taxonomy/taxonomy.module.js';
+import { SocialModule } from './modules/social/social.module.js';
 
 @Module({
   imports: [
@@ -35,6 +37,8 @@ import { HealthModule } from './modules/health/health.module.js';
     HealthModule,
     AuthModule,
     GamesModule,
+    TaxonomyModule,
+    SocialModule,
   ],
 })
 export class AppModule implements NestModule {

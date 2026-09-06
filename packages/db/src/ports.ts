@@ -729,6 +729,9 @@ export interface SocialRepository {
   deletePlaylist(id: ID): Promise<boolean>;
 
   createReport(data: { reporterId?: ID | null; targetKind: string; targetId: string; reason: string; details?: string | null }): Promise<ReportRow>;
+  /** One reporter may only report a target once — without this, reports_count is
+   *  inflatable by a single angry user (and it drives auto-hiding). */
+  findReport(reporterId: ID, targetKind: string, targetId: string): Promise<ReportRow | null>;
   listReports(filter?: { status?: string; page?: Page }): Promise<List<ReportRow>>;
   resolveReport(id: ID, input: { moderatorId: ID; status: string; resolution?: string | null }): Promise<ReportRow | null>;
 }

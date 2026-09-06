@@ -11,6 +11,10 @@
  * Services return either a plain value or `{ items, total }`; the interceptor
  * detects the latter and builds the pagination block with the same arithmetic the
  * database pager used, so `totalPages` can never disagree with `total`.
+ *
+ * Any OTHER key on a list result is preserved next to `items` (facet counts, a
+ * rating breakdown, a totals row). Silently dropping them is how an endpoint that
+ * works in the service tests returns half its payload to the browser.
  */
 
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
@@ -46,14 +50,15 @@ export class ResponseInterceptor<T> implements NestInterceptor<T, unknown> {
           const page = toInt(request.query.page, 1);
           const perPage = toInt(request.query.perPage ?? request.query.per_page, value.items.length || 24);
           const totalPages = perPage > 0 ? Math.max(1, Math.ceil(value.total / perPage)) : 1;
+          const { items, total, ...extras } = value as ListResult<unknown> & Record<string, unknown>;
           return {
             ok: true,
-            data: { items: value.items },
+            data: { items, ...extras },
             meta: {
               pagination: {
                 page,
                 perPage,
-                total: value.total,
+                total,
                 totalPages,
                 hasNext: page < totalPages,
                 hasPrev: page > 1,

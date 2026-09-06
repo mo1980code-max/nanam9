@@ -262,7 +262,14 @@ export class PgSocialRepository extends PgRepo implements SocialRepository {
 
   async listRatings(gameId: ID, page?: { page: number; perPage: number; offset: number }): Promise<List<RatingRow>> {
     const p = pageOf(page, 10);
-    const total = (await this.conn.value<number>(`SELECT count(*)::int FROM ratings WHERE game_id = $1`, [gameId])) ?? 0;
+    // The count uses the SAME predicate as the page: this list is the written
+    // reviews (star-only ratings still count towards rating_avg, they just have
+    // nothing to render). A total that counts more rows than the filter can ever
+    // return produces a pager with permanently empty last pages.
+    const total = (await this.conn.value<number>(
+      `SELECT count(*)::int FROM ratings WHERE game_id = $1 AND review IS NOT NULL AND length(btrim(review)) > 0`,
+      [gameId],
+    )) ?? 0;
     const items = await this.conn.many<RatingRow>(
       `SELECT r.*, jsonb_build_object('id', u.id, 'username', u.username, 'displayName', u.display_name, 'avatarUrl', u.avatar_url) AS user
          FROM ratings r JOIN users u ON u.id = r.user_id
@@ -355,13 +362,17 @@ export class PgSocialRepository extends PgRepo implements SocialRepository {
 
   async addGameToPlaylist(playlistId: ID, gameId: ID, position?: number): Promise<boolean> {
     const pos = position ?? ((await this.conn.value<number>(`SELECT coalesce(max(position), -1) + 1 FROM playlist_game WHERE playlist_id = $1`, [playlistId])) ?? 0);
-    await this.conn.run(
+    // The affected-row count is the answer: ON CONFLICT DO NOTHING reports 0 when
+    // the game was already in the playlist. Returning a hardcoded `true` here made
+    // every "add" look successful, so a client could never tell a real add from a
+    // duplicate and the UI would happily show a toast for a no-op.
+    const inserted = (await this.conn.run(
       `INSERT INTO playlist_game (playlist_id, game_id, position, created_at) VALUES ($1,$2,$3,now())
        ON CONFLICT (playlist_id, game_id) DO NOTHING`,
       [playlistId, gameId, pos],
-    );
-    await this.syncPlaylistCount(playlistId);
-    return true;
+    )) > 0;
+    if (inserted) await this.syncPlaylistCount(playlistId);
+    return inserted;
   }
 
   async removeGameFromPlaylist(playlistId: ID, gameId: ID): Promise<boolean> {
@@ -418,6 +429,13 @@ export class PgSocialRepository extends PgRepo implements SocialRepository {
       await this.conn.run(`UPDATE comments SET reports_count = reports_count + 1 WHERE id = $1`, [data.targetId]);
     }
     return row;
+  }
+
+  async findReport(reporterId: ID, targetKind: string, targetId: string): Promise<ReportRow | null> {
+    return this.conn.one<ReportRow>(
+      `SELECT * FROM reports WHERE reporter_id = $1 AND target_kind = $2 AND target_id = $3 LIMIT 1`,
+      [reporterId, targetKind, targetId],
+    );
   }
 
   async listReports(filter: { status?: string; page?: { page: number; perPage: number; offset: number } } = {}): Promise<List<ReportRow>> {

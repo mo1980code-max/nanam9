@@ -858,7 +858,7 @@ CREATE TABLE "activity_logs" (
     "actor_id" VARCHAR(30),
     "actor_label" VARCHAR(120),
     "action" VARCHAR(80) NOT NULL,
-    "target_kind" "target_kind",
+    "target_kind" VARCHAR(40),
     "target_id" VARCHAR(30),
     "before" JSONB,
     "after" JSONB,
