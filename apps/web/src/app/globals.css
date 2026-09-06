@@ -1,0 +1,312 @@
+@import 'tailwindcss';
+
+/**
+ * Voltade design system.
+ *
+ * ARABIC-FIRST, AND THAT IS A LAYOUT DECISION NOT A TRANSLATION ONE: the document is
+ * `dir="rtl"`, so every spacing utility here is a *logical* one (ps/pe/ms/me/start/end).
+ * A physical `pl-4` would be correct in Arabic and wrong in English, and the day the
+ * English locale ships is the day someone finds 200 of them.
+ *
+ * DARK/LIGHT are two sets of the same custom properties. Components never hardcode a
+ * colour, so a new theme from the admin panel (the `themes` table) is a variable
+ * override, not a rebuild — which is exactly the flexibility the competing scripts
+ * lack with their four fixed skins.
+ */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #f4f5fb;
+  --bg-accent: #e9ebfa;
+  --surface: #ffffff;
+  --surface-2: #f7f8fd;
+  --surface-3: #eef0f9;
+  --border: #e2e5f2;
+  --border-strong: #cfd4ea;
+  --text: #14162b;
+  --text-muted: #5b6079;
+  --brand: #7c3aed;
+  --brand-strong: #6d28d9;
+  --brand-soft: #ede9fe;
+  --accent: #06b6d4;
+  --accent-soft: #cffafe;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --star: #f59e0b;
+  --shadow-color: 240 40% 40%;
+  --radius: 1rem;
+}
+
+.dark {
+  --bg: #07070f;
+  --bg-accent: #0d0b1e;
+  --surface: #101024;
+  --surface-2: #16162e;
+  --surface-3: #1e1e3c;
+  --border: #262647;
+  --border-strong: #35355f;
+  --text: #f2f3ff;
+  --text-muted: #9ea2c8;
+  --brand: #a78bfa;
+  --brand-strong: #8b5cf6;
+  --brand-soft: #2a1f52;
+  --accent: #22d3ee;
+  --accent-soft: #10303f;
+  --shadow-color: 250 60% 3%;
+}
+
+@theme inline {
+  --font-sans: 'Cairo', 'Noto Kufi Arabic', 'Segoe UI', Tahoma, system-ui, -apple-system, sans-serif;
+  --font-display: 'Cairo', 'Noto Kufi Arabic', 'Segoe UI', system-ui, sans-serif;
+
+  --color-bg: var(--bg);
+  --color-bg-accent: var(--bg-accent);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-ink: var(--text);
+  --color-muted: var(--text-muted);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-soft: var(--brand-soft);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-star: var(--star);
+
+  --radius-card: var(--radius);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    /* Two soft radial washes: enough depth to not look like a bootstrap template,
+       cheap enough to paint (no filters, no blur, no images). */
+    background-image:
+      radial-gradient(900px 480px at 88% -8%, color-mix(in oklab, var(--brand) 16%, transparent), transparent 62%),
+      radial-gradient(760px 420px at 4% 4%, color-mix(in oklab, var(--accent) 12%, transparent), transparent 60%);
+    background-attachment: fixed;
+    min-height: 100dvh;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--brand) 32%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+    border-radius: 0.5rem;
+  }
+
+  h1, h2, h3, h4 {
+    font-weight: 800;
+    letter-spacing: -0.01em;
+  }
+
+  /* A thin, theme-aware scrollbar: the default one is a bright grey bar in dark mode. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  .card {
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 999px;
+    padding: 0.55rem 1.1rem;
+    font-weight: 700;
+    font-size: 0.9rem;
+    transition: transform 0.15s ease, box-shadow 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+    border: 1px solid transparent;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn:active { transform: translateY(1px) scale(0.99); }
+  .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--brand), color-mix(in oklab, var(--accent) 55%, var(--brand)));
+    color: #fff;
+    box-shadow: 0 10px 24px -12px color-mix(in oklab, var(--brand) 80%, transparent);
+  }
+  .btn-primary:hover { box-shadow: 0 16px 30px -12px color-mix(in oklab, var(--brand) 85%, transparent); }
+
+  .btn-ghost {
+    background-color: var(--surface);
+    border-color: var(--border);
+    color: var(--text);
+  }
+  .btn-ghost:hover { border-color: var(--border-strong); background-color: var(--surface-2); }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    padding: 0.28rem 0.7rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    background-color: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+  }
+  .chip:hover { color: var(--text); border-color: var(--brand); background-color: var(--brand-soft); }
+
+  .section-title {
+    font-size: clamp(1.15rem, 2.4vw, 1.6rem);
+    font-weight: 900;
+  }
+
+  /* The game tile: art on top, title under, counters on hover. `aspect-ratio` reserves
+     the box so a slow image cannot shift the layout — that is CLS, and CLS is a Core
+     Web Vital we are being graded on. */
+  .tile {
+    position: relative;
+    display: block;
+    border-radius: var(--radius);
+    overflow: hidden;
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+    transition: transform 0.18s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+  }
+  .tile:hover {
+    transform: translateY(-4px);
+    border-color: color-mix(in oklab, var(--brand) 55%, var(--border));
+    box-shadow: 0 22px 40px -22px color-mix(in oklab, var(--shadow-color) 55%, transparent);
+  }
+  .tile-art { aspect-ratio: 4 / 3; width: 100%; object-fit: cover; display: block; background: var(--surface-3); }
+  .tile-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(to top, color-mix(in oklab, #05050c 78%, transparent), transparent 58%);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  .tile:hover .tile-overlay { opacity: 1; }
+
+  .rail {
+    display: flex;
+    gap: 0.9rem;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    padding-bottom: 0.35rem;
+  }
+  .rail > * { scroll-snap-align: start; flex: 0 0 auto; }
+
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  .skeleton {
+    background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 37%, var(--surface-2) 63%);
+    background-size: 400% 100%;
+    animation: shimmer 1.4s ease infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+  }
+
+  /* Prose for the blog and page-builder rich_text blocks. Scoped, because a global
+     element selector here would fight every component in the app. */
+  .prose-ar {
+    color: var(--text);
+    line-height: 2;
+    font-size: 1.02rem;
+  }
+  .prose-ar h1, .prose-ar h2, .prose-ar h3 { margin: 1.6rem 0 0.7rem; line-height: 1.5; }
+  .prose-ar h2 { font-size: 1.35rem; }
+  .prose-ar h3 { font-size: 1.15rem; }
+  .prose-ar p { margin: 0.85rem 0; }
+  .prose-ar ul, .prose-ar ol { margin: 0.85rem 1.4rem; display: flex; flex-direction: column; gap: 0.35rem; }
+  .prose-ar ul { list-style: disc; }
+  .prose-ar ol { list-style: decimal; }
+  .prose-ar a { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; }
+  .prose-ar code {
+    background: var(--surface-3);
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.4rem;
+    font-size: 0.88em;
+    direction: ltr;
+    display: inline-block;
+  }
+  .prose-ar pre {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    padding: 0.9rem;
+    border-radius: 0.8rem;
+    overflow-x: auto;
+    direction: ltr;
+    text-align: left;
+  }
+  .prose-ar blockquote {
+    border-inline-start: 3px solid var(--brand);
+    padding-inline-start: 0.9rem;
+    color: var(--text-muted);
+    margin: 1rem 0;
+  }
+  .prose-ar img { border-radius: 0.9rem; margin: 1rem 0; }
+  .prose-ar hr { border: 0; border-top: 1px solid var(--border); margin: 1.6rem 0; }
+  .prose-ar table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  .prose-ar th, .prose-ar td { border: 1px solid var(--border); padding: 0.5rem 0.7rem; text-align: start; }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+  .text-pretty { text-wrap: pretty; }
+  .glow-brand { box-shadow: 0 0 0 1px color-mix(in oklab, var(--brand) 40%, transparent), 0 18px 40px -24px var(--brand); }
+  .gradient-text {
+    background: linear-gradient(120deg, var(--brand), var(--accent));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
