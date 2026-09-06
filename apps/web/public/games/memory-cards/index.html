@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Memory Cards</title>
+<style>
+  :root{color-scheme:dark}*{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#0a0f1e;color:#eaf0ff;overflow:hidden;font-family:system-ui,"Segoe UI",Roboto,sans-serif}
+  #app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:12px}
+  #top{display:flex;gap:10px;align-items:center;justify-content:space-between;width:min(94vw,440px)}
+  h1{font-size:clamp(20px,5vw,30px);background:linear-gradient(135deg,#5ee7ff,#7aa2ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .pill{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:6px 12px;font-weight:700;font-size:14px}
+  #grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:min(94vw,440px)}
+  .card{aspect-ratio:3/4;perspective:600px;cursor:pointer}
+  .in{position:relative;width:100%;height:100%;transition:transform .38s cubic-bezier(.4,.2,.2,1);transform-style:preserve-3d}
+  .card.up .in,.card.done .in{transform:rotateY(180deg)}
+  .f,.b{position:absolute;inset:0;display:grid;place-items:center;border-radius:14px;backface-visibility:hidden;font-size:clamp(22px,7vw,38px)}
+  .b{background:linear-gradient(135deg,#1b2547,#141b34);border:1px solid rgba(255,255,255,.09);color:#7aa2ff;font-weight:800}
+  .f{background:linear-gradient(135deg,#26356b,#1a2450);border:1px solid rgba(122,162,255,.4);transform:rotateY(180deg)}
+  .card.done .f{background:linear-gradient(135deg,#1d6b4a,#14453a);border-color:rgba(94,231,180,.5)}
+  #over{position:fixed;inset:0;display:none;place-items:center;background:rgba(5,8,18,.86);text-align:center}
+  #over.show{display:grid}
+  button{margin-top:12px;padding:12px 26px;border:0;border-radius:999px;font:800 16px system-ui;cursor:pointer;color:#0a0f1e;
+    background:linear-gradient(135deg,#5ee7ff,#7aa2ff)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top"><h1>Memory Cards</h1>
+    <div style="display:flex;gap:8px"><span class="pill" id="mv">محاولات 0</span><span class="pill" id="pr">أزواج 0/8</span></div></div>
+  <div id="grid"></div>
+</div>
+<div id="over"><div><div style="font-size:22px;font-weight:800" id="msg">أحسنت! 🎉</div><button id="again">جولة جديدة</button></div></div>
+<script>
+(function () {
+  var host = window.parent !== window ? window.parent : null;
+  function post(m) { try { host && host.postMessage(Object.assign({ source: 'voltade-game' }, m), '*'); } catch (e) {} }
+  var FACES = ['🚀', '⚡', '🎮', '🏎️', '🧩', '🛸', '🔥', '💎'];
+  var grid = document.getElementById('grid'), first = null, lock = false, moves = 0, pairs = 0;
+
+  function shuffle(a) { for (var i = a.length - 1; i > 0; i--) { var j = (Math.random() * (i + 1)) | 0; var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function build() {
+    var deck = shuffle(FACES.concat(FACES).map(function (f, i) { return { f: f, i: i }; }));
+    grid.innerHTML = ''; moves = 0; pairs = 0; first = null; lock = false; hud();
+    document.getElementById('over').classList.remove('show');
+    deck.forEach(function (card) {
+      var el = document.createElement('div'); el.className = 'card'; el.dataset.f = card.f;
+      el.innerHTML = '<div class="in"><div class="b">V</div><div class="f">' + card.f + '</div></div>';
+      el.addEventListener('click', function () { flip(el); });
+      grid.appendChild(el);
+    });
+    post({ type: 'voltade:ready' });
+  }
+  function hud() { document.getElementById('mv').textContent = 'محاولات ' + moves; document.getElementById('pr').textContent = 'أزواج ' + pairs + '/8'; }
+  function flip(el) {
+    if (lock || el.classList.contains('up') || el.classList.contains('done')) return;
+    el.classList.add('up');
+    if (!first) { first = el; return; }
+    moves++; hud();
+    if (first.dataset.f === el.dataset.f) {
+      first.classList.add('done'); el.classList.add('done'); first = null; pairs++; hud();
+      post({ type: 'voltade:score', score: pairs });
+      if (pairs === 8) {
+        var score = Math.max(10, 200 - moves * 6);
+        post({ type: 'voltade:complete', score: score, moves: moves });
+        document.getElementById('msg').textContent = 'أحسنت! 🎉 ' + moves + ' محاولة — نقاطك ' + score;
+        document.getElementById('over').classList.add('show');
+      }
+    } else {
+      lock = true;
+      var a = first; first = null;
+      setTimeout(function () { a.classList.remove('up'); el.classList.remove('up'); lock = false; }, 620);
+    }
+  }
+  document.getElementById('again').addEventListener('click', build);
+  build();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1400 @@
+// ══════════════════════════════════════════════════════════════════════════════
+//  Voltade — canonical database schema (source of truth)
+// ══════════════════════════════════════════════════════════════════════════════
+//
+//  WHY PRISMA SCHEMA IS THE SOURCE OF TRUTH
+//  ----------------------------------------
+//  Every table/column/index below is what production runs. `prisma/migrations/*/
+//  migration.sql` is the DDL that materialises it on PostgreSQL 16, and a test
+//  (packages/db/test/schema-parity.test.ts) parses THIS file and compares it,
+//  column by column, against `information_schema` of a live database that has
+//  just run those migrations. So the three artefacts — schema, SQL, live DB —
+//  cannot drift without a red build. That gate exists because the sandbox this
+//  repo was written in cannot reach binaries.prisma.sh, so `prisma migrate diff`
+//  could not be used to generate the SQL; a machine check replaces it.
+//
+//  CONVENTIONS
+//  -----------
+//  · Physical names are snake_case (`@@map` / `@map`) because that is what the
+//    SQL driver, the DBA and `psql` all read. Prisma's camelCase stays in code.
+//  · Public entities use `String @id @default(cuid())`: non-enumerable ids mean
+//    a scraper cannot walk `/api/games/1..N` and a leaked id leaks nothing about
+//    table size. Append-only, high-volume tables (plays, stats, logs, xp) use
+//    `BigInt @id @default(autoincrement())` — 8 bytes beats 25, and nothing
+//    outside the server ever sees them.
+//  · Counters (plays, likes_count, rating_avg, games_count…) are denormalised
+//    onto the parent row and updated with `SET x = x + 1` in the same
+//    transaction. Sorting 20k+ games by "most played" must be an index scan,
+//    never a `COUNT(*) … GROUP BY` per request.
+//  · `deleted_at` = soft delete on rows a moderator may need to restore
+//    (users, games, comments, posts, pages). Every read path filters it.
+//  · Postgres enums (not check-constraints, not strings) so an invalid status is
+//    physically unwritable.
+// ══════════════════════════════════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────────── enums ─────────────────────────────────
+
+enum GameStatus {
+  draft
+  pending_review
+  published
+  archived
+  blocked
+
+  @@map("game_status")
+}
+
+enum GameKind {
+  iframe
+  html5_zip
+  unity_webgl
+  embed_html
+  external
+
+  @@map("game_kind")
+}
+
+enum GameOrientation {
+  any
+  portrait
+  landscape
+
+  @@map("game_orientation")
+}
+
+enum AgeRating {
+  everyone
+  everyone_10
+  teen
+  mature
+
+  @@map("age_rating")
+}
+
+enum UserStatus {
+  pending
+  active
+  banned
+  deleted
+
+  @@map("user_status")
+}
+
+enum OAuthProvider {
+  google
+  facebook
+  discord
+  apple
+  github
+
+  @@map("oauth_provider")
+}
+
+enum SessionKind {
+  refresh
+  api_token
+  magic_link
+
+  @@map("session_kind")
+}
+
+enum TagScope {
+  game
+  blog
+
+  @@map("tag_scope")
+}
+
+enum AssetKind {
+  thumbnail
+  banner
+  screenshot
+  icon
+  package
+  video
+
+  @@map("asset_kind")
+}
+
+enum CommentStatus {
+  pending
+  visible
+  hidden
+  spam
+  deleted
+
+  @@map("comment_status")
+}
+
+enum TargetKind {
+  game
+  comment
+  blog_post
+  user
+
+  @@map("target_kind")
+}
+
+enum PlaylistVisibility {
+  private
+  unlisted
+  public
+
+  @@map("playlist_visibility")
+}
+
+enum DeviceKind {
+  desktop
+  mobile
+  tablet
+  unknown
+
+  @@map("device_kind")
+}
+
+/// One row per (day, dimension, key) in daily_stats. `device` and `country`
+/// drive the traffic report and ad targeting; `source` is the referrer/UTM mix.
+enum StatDimension {
+  site
+  game
+  category
+  source
+  country
+  device
+
+  @@map("stat_dimension")
+}
+
+enum BadgeTier {
+  bronze
+  silver
+  gold
+  platinum
+
+  @@map("badge_tier")
+}
+
+enum NotificationKind {
+  comment_reply
+  comment_like
+  achievement
+  system
+  moderation
+  subscription
+
+  @@map("notification_kind")
+}
+
+enum AdPlacement {
+  header
+  header_bottom
+  sidebar_top
+  sidebar_bottom
+  in_feed
+  interstitial
+  footer
+  game_top
+  game_side
+  game_bottom
+  blog_post
+  preloader
+
+  @@map("ad_placement")
+}
+
+enum AdType {
+  html
+  adsense
+  google_ad_manager
+  prebid
+  image
+  script
+
+  @@map("ad_type")
+}
+
+enum AdStatus {
+  active
+  paused
+  scheduled
+  expired
+  archived
+
+  @@map("ad_status")
+}
+
+enum ContentStatus {
+  draft
+  published
+  scheduled
+  archived
+
+  @@map("content_status")
+}
+
+enum SettingType {
+  string
+  number
+  boolean
+  json
+  html
+  color
+  image
+
+  @@map("setting_type")
+}
+
+enum ReportReason {
+  spam
+  harassment
+  hate
+  sexual
+  violence
+  illegal
+  copyright
+  misleading
+  other
+
+  @@map("report_reason")
+}
+
+enum ReportStatus {
+  open
+  reviewing
+  action_taken
+  dismissed
+
+  @@map("report_status")
+}
+
+enum PlanInterval {
+  month
+  year
+  lifetime
+
+  @@map("plan_interval")
+}
+
+enum SubscriptionStatus {
+  incomplete
+  trialing
+  active
+  past_due
+  canceled
+  expired
+
+  @@map("subscription_status")
+}
+
+enum PaymentProvider {
+  stripe
+  paypal
+
+  @@map("payment_provider")
+}
+
+enum PaymentStatus {
+  pending
+  succeeded
+  failed
+  refunded
+  canceled
+
+  @@map("payment_status")
+}
+
+enum ProviderKind {
+  gamemonetize
+  gamedistribution
+  poke
+  rss
+  json
+  custom
+
+  @@map("provider_kind")
+}
+
+enum ProviderItemStatus {
+  new
+  imported
+  duplicate
+  rejected
+  failed
+  skipped
+
+  @@map("provider_item_status")
+}
+
+enum ImportStatus {
+  queued
+  running
+  succeeded
+  partial
+  failed
+  canceled
+
+  @@map("import_status")
+}
+
+enum SectionKind {
+  hero
+  carousel
+  game_grid
+  category_grid
+  tag_cloud
+  banner
+  html
+  leaderboard
+  recent
+  popular
+
+  @@map("section_kind")
+}
+
+enum BackupKind {
+  database
+  files
+  full
+
+  @@map("backup_kind")
+}
+
+enum BackupStatus {
+  pending
+  running
+  done
+  failed
+
+  @@map("backup_status")
+}
+
+// ─────────────────────────── identity & access ───────────────────────────
+
+/// RBAC: `roles.level` is the coarse hierarchy used by @Roles(), the fine grain
+/// lives in `permissions` ('games.publish', 'comments.moderate', …) and is what
+/// the PoliciesGuard actually checks. Splitting the two keeps "who outranks
+/// whom" (one integer) away from "what may this action do" (a growing list).
+model Role {
+  id          String   @id @default(cuid()) @db.VarChar(30)
+  slug        String   @unique @db.VarChar(40)
+  name        String   @db.VarChar(80)
+  description String?  @db.VarChar(255)
+  level       Int      @default(20) @db.SmallInt
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  permissions RolePermission[]
+  users       User[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(cuid()) @db.VarChar(30)
+  slug        String   @unique @db.VarChar(80)
+  module      String   @db.VarChar(40)
+  action      String   @db.VarChar(40)
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  roles RolePermission[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.VarChar(30)
+  permissionId String @map("permission_id") @db.VarChar(30)
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model User {
+  id           String     @id @default(cuid()) @db.VarChar(30)
+  email        String?    @unique @db.VarChar(190)
+  username     String     @unique @db.VarChar(40)
+  displayName  String?    @map("display_name") @db.VarChar(80)
+  avatarUrl    String?    @map("avatar_url") @db.VarChar(500)
+  passwordHash String?    @map("password_hash") @db.VarChar(255)
+  locale       String     @default("ar") @db.VarChar(8)
+  timezone     String?    @db.VarChar(60)
+  bio          String?    @db.VarChar(500)
+  website      String?    @db.VarChar(255)
+  status       UserStatus @default(active)
+
+  roleId String @map("role_id") @db.VarChar(30)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  // Gamification counters, denormalised so a profile page is one row read.
+  xp            Int @default(0)
+  level         Int @default(1) @db.SmallInt
+  playsCount    Int @default(0) @map("plays_count")
+  commentsCount Int @default(0) @map("comments_count")
+
+  twoFactorSecret      String?  @map("two_factor_secret") @db.VarChar(64)
+  twoFactorEnabled     Boolean  @default(false) @map("two_factor_enabled")
+  twoFactorBackupCodes String[] @default([]) @map("two_factor_backup_codes")
+
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
+  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz(6)
+  lastLoginIp     String?   @map("last_login_ip") @db.VarChar(45)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  oauthAccounts  OAuthAccount[]
+  sessions       Session[]
+  comments       Comment[]
+  likes          Like[]
+  ratings        Rating[]
+  favorites      Favorite[]
+  playlists      Playlist[]
+  plays          GamePlay[]
+  achievements   UserAchievement[]
+  xpEvents       XpEvent[]
+  notifications  Notification[]
+  reportsFiled   Report[]         @relation("reporter")
+  reportsHandled Report[]         @relation("moderator")
+  subscriptions  Subscription[]
+  payments       Payment[]
+  blogPosts      BlogPost[]
+  activityLogs   ActivityLog[]
+  importJobs     ImportJob[]
+
+  @@index([status, roleId])
+  @@index([xp])
+  @@map("users")
+}
+
+model OAuthAccount {
+  id             String        @id @default(cuid()) @db.VarChar(30)
+  userId         String        @map("user_id") @db.VarChar(30)
+  provider       OAuthProvider
+  providerUserId String        @map("provider_user_id") @db.VarChar(190)
+  email          String?       @db.VarChar(190)
+  name           String?       @db.VarChar(120)
+  avatarUrl      String?       @map("avatar_url") @db.VarChar(500)
+  accessToken    String?       @map("access_token") @db.VarChar(2000)
+  refreshToken   String?       @map("refresh_token") @db.VarChar(2000)
+  tokenExpiresAt DateTime?     @map("token_expires_at") @db.Timestamptz(6)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("oauth_accounts")
+}
+
+/// Refresh-token / API-token store. Access tokens are short-lived JWTs and are
+/// never persisted; the hash of a refresh token is, so "sign out everywhere"
+/// and "which devices are logged in" are both a single query.
+model Session {
+  id         String      @id @default(cuid()) @db.VarChar(30)
+  userId     String      @map("user_id") @db.VarChar(30)
+  tokenHash  String      @unique @map("token_hash") @db.VarChar(128)
+  kind       SessionKind @default(refresh)
+  userAgent  String?     @map("user_agent") @db.VarChar(400)
+  ip         String?     @db.VarChar(45)
+  expiresAt  DateTime    @map("expires_at") @db.Timestamptz(6)
+  revokedAt  DateTime?   @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt DateTime?   @map("last_used_at") @db.Timestamptz(6)
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("sessions")
+}
+
+// ───────────────────────────── catalogue ─────────────────────────────
+
+model Category {
+  id          String   @id @default(cuid()) @db.VarChar(30)
+  slug        String   @unique @db.VarChar(120)
+  /// Nested categories: parent_id NULL = top level. Depth is not capped in the
+  /// schema (the API caps it) because a marketplace keeps reorganising.
+  parentId    String?  @map("parent_id") @db.VarChar(30)
+  name        String   @db.VarChar(120)
+  nameEn      String?  @map("name_en") @db.VarChar(120)
+  description String?
+  icon        String?  @db.VarChar(60)
+  thumbnailUrl String? @map("thumbnail_url") @db.VarChar(500)
+  color       String?  @db.VarChar(20)
+  sortOrder   Int      @default(0) @map("sort_order")
+  isVisible   Boolean  @default(true) @map("is_visible")
+  gamesCount  Int      @default(0) @map("games_count")
+
+  seoTitle       String? @map("seo_title") @db.VarChar(200)
+  seoDescription String? @map("seo_description") @db.VarChar(400)
+  seoKeywords    String? @map("seo_keywords") @db.VarChar(400)
+  canonicalUrl   String? @map("canonical_url") @db.VarChar(500)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  parent   Category?  @relation("category_tree", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("category_tree")
+  games    CategoryGame[]
+
+  @@index([parentId, sortOrder])
+  @@index([isVisible, sortOrder])
+  @@map("categories")
+}
+
+/// `category_game` — explicit join (not Prisma's implicit m-n) because it carries
+/// `position` for drag & drop ordering, and because the brief names the table.
+model CategoryGame {
+  categoryId String @map("category_id") @db.VarChar(30)
+  gameId     String @map("game_id") @db.VarChar(30)
+  position   Int    @default(0)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  game     Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@id([categoryId, gameId])
+  @@index([gameId])
+  @@index([categoryId, position])
+  @@map("category_game")
+}
+
+model Tag {
+  id         String   @id @default(cuid()) @db.VarChar(30)
+  slug       String   @unique @db.VarChar(80)
+  name       String   @db.VarChar(80)
+  scope      TagScope @default(game)
+  gamesCount Int      @default(0) @map("games_count")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  games TagGame[]
+  posts BlogPostTag[]
+
+  @@index([scope, gamesCount])
+  @@map("tags")
+}
+
+model TagGame {
+  tagId     String   @map("tag_id") @db.VarChar(30)
+  gameId    String   @map("game_id") @db.VarChar(30)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@id([tagId, gameId])
+  @@index([gameId])
+  @@map("tag_game")
+}
+
+model Game {
+  id   String @id @default(cuid()) @db.VarChar(30)
+  slug String @unique @db.VarChar(160)
+
+  title         String  @db.VarChar(200)
+  titleEn       String? @map("title_en") @db.VarChar(200)
+  description   String?
+  descriptionEn String? @map("description_en")
+  /// How to play: keyboard/mouse/touch hints rendered beside the canvas.
+  instructions  String?
+  developer     String? @db.VarChar(120)
+  version       String? @db.VarChar(30)
+  releaseYear   Int?    @map("release_year") @db.SmallInt
+
+  kind        GameKind        @default(iframe)
+  /// iframe src OR the public URL of an extracted uploaded build.
+  url         String          @db.VarChar(1000)
+  filePath    String?         @map("file_path") @db.VarChar(500)
+  width       Int?            @db.SmallInt
+  height      Int?            @db.SmallInt
+  orientation GameOrientation @default(any)
+  /// Preload/first-paint weight in KB, shown to the player and used to warn on
+  /// mobile connections. Reported by providers, measured for uploads.
+  sizeKb      Int?            @map("size_kb")
+
+  thumbnailUrl String   @map("thumbnail_url") @db.VarChar(500)
+  bannerUrl    String?  @map("banner_url") @db.VarChar(500)
+  gallery      String[] @default([])
+
+  status    GameStatus @default(draft)
+  featured  Boolean    @default(false)
+  /// premium = subscribers only (part of the no-ads/premium tier).
+  premium   Boolean    @default(false)
+  ageRating AgeRating  @default(everyone) @map("age_rating")
+
+  // ── provenance & duplicate detection ──────────────────────────────────────
+  // source_hash = sha256(provider|provider_game_id|normalised url|title). It is
+  // UNIQUE, so the classic marketplace bug — the same game imported twice under
+  // two ids, or re-imported every cron run — is impossible at the database
+  // layer, not merely discouraged in application code.
+  providerSlug  String? @map("provider_slug") @db.VarChar(40)
+  providerGameId String? @map("provider_game_id") @db.VarChar(120)
+  providerUrl   String? @map("provider_url") @db.VarChar(1000)
+  sourceHash    String? @unique @map("source_hash") @db.VarChar(64)
+
+  // ── denormalised counters (see header) ────────────────────────────────────
+  plays         Int     @default(0)
+  uniquePlays   Int     @default(0) @map("unique_plays")
+  likesCount    Int     @default(0) @map("likes_count")
+  dislikesCount Int     @default(0) @map("dislikes_count")
+  ratingAvg     Float   @default(0) @map("rating_avg") @db.Real
+  ratingCount   Int     @default(0) @map("rating_count")
+  commentsCount Int     @default(0) @map("comments_count")
+  favoritesCount Int    @default(0) @map("favorites_count")
+
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(6)
+
+  // ── per-game SEO (auto-generated, manually overridable) ───────────────────
+  seoTitle       String? @map("seo_title") @db.VarChar(200)
+  seoDescription String? @map("seo_description") @db.VarChar(400)
+  seoKeywords    String? @map("seo_keywords") @db.VarChar(400)
+  canonicalUrl   String? @map("canonical_url") @db.VarChar(500)
+  noindex        Boolean @default(false)
+
+  /// Escape hatch for provider-specific payload we must keep but do not query
+  /// (GameDistribution's categories, GameMonetize's `mature` flag, …).
+  meta Json @default("{}")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  categories  CategoryGame[]
+  tags        TagGame[]
+  assets      GameAsset[]
+  comments    Comment[]
+  ratings     Rating[]
+  favorites   Favorite[]
+  playsLog    GamePlay[]
+  playlists   PlaylistGame[]
+  dailyStats  DailyStat[]  @relation("game_stats")
+  providerItems ProviderItem[]
+
+  // The hot sort orders. Each one is a partial index over published, non-deleted
+  // rows so the working set stays in RAM even past 20k games: the index holds
+  // only what the catalogue pages can ever render.
+  @@index([status, publishedAt(sort: Desc)])
+  @@index([status, plays(sort: Desc)])
+  @@index([status, ratingAvg(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([featured, status])
+  @@index([providerSlug, providerGameId])
+  @@map("games")
+}
+
+model GameAsset {
+  id         String    @id @default(cuid()) @db.VarChar(30)
+  gameId     String    @map("game_id") @db.VarChar(30)
+  kind       AssetKind @default(thumbnail)
+  url        String    @db.VarChar(500)
+  storageKey String?   @map("storage_key") @db.VarChar(500)
+  mimeType   String?   @map("mime_type") @db.VarChar(80)
+  width      Int?      @db.SmallInt
+  height     Int?      @db.SmallInt
+  sizeBytes  BigInt?   @map("size_bytes")
+  alt        String?   @db.VarChar(255)
+  sortOrder  Int       @default(0) @map("sort_order")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@index([gameId, kind, sortOrder])
+  @@map("game_assets")
+}
+
+// ─────────────────────────── social / engagement ───────────────────────────
+
+model Comment {
+  id          String  @id @default(cuid()) @db.VarChar(30)
+  gameId      String? @map("game_id") @db.VarChar(30)
+  blogPostId  String? @map("blog_post_id") @db.VarChar(30)
+  userId      String? @map("user_id") @db.VarChar(30)
+  /// Nested comments: one self-relation, unlimited depth, materialised as a
+  /// tree in the API (two queries max: page of roots + all descendants).
+  parentId    String? @map("parent_id") @db.VarChar(30)
+
+  authorName   String? @map("author_name") @db.VarChar(80)
+  authorEmail  String? @map("author_email") @db.VarChar(190)
+  /// Hashed, never raw: enough to rate-limit a flood, not enough to deanonymise.
+  authorIpHash String? @map("author_ip_hash") @db.VarChar(64)
+
+  body          String
+  status        CommentStatus @default(pending)
+  likesCount    Int           @default(0) @map("likes_count")
+  dislikesCount Int           @default(0) @map("dislikes_count")
+  reportsCount  Int           @default(0) @map("reports_count")
+  editedAt      DateTime?     @map("edited_at") @db.Timestamptz(6)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  game     Game?     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  blogPost BlogPost? @relation(fields: [blogPostId], references: [id], onDelete: Cascade)
+  user     User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent   Comment?  @relation("comment_tree", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  Comment[] @relation("comment_tree")
+
+  @@index([gameId, status, createdAt(sort: Desc)])
+  @@index([blogPostId, status, createdAt(sort: Desc)])
+  @@index([parentId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("comments")
+}
+
+/// One polymorphic table for game/comment/post votes: `value` is +1 (like) or
+/// −1 (dislike) and the unique key makes a second vote an UPSERT, so a user can
+/// switch sides but never double-count.
+///
+/// Trade-off, taken deliberately: `(target_kind, target_id)` cannot be a foreign
+/// key — Postgres has no polymorphic FK — so referential integrity for the
+/// *target* is the application's job (a transaction that deletes a game also
+/// deletes its likes, and `tools/integrity` re-checks it nightly). The reward is
+/// one table, one index and one counter-update path for every likeable thing,
+/// instead of three parallel tables that the frontend would have to union.
+model Like {
+  id         String     @id @default(cuid()) @db.VarChar(30)
+  userId     String     @map("user_id") @db.VarChar(30)
+  targetKind TargetKind @map("target_kind")
+  targetId   String     @map("target_id") @db.VarChar(30)
+  value      Int        @default(1) @db.SmallInt
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, targetKind, targetId])
+  @@index([targetKind, targetId])
+  @@index([userId, targetKind])
+  @@map("likes")
+}
+
+model Rating {
+  id        String   @id @default(cuid()) @db.VarChar(30)
+  userId    String   @map("user_id") @db.VarChar(30)
+  gameId    String   @map("game_id") @db.VarChar(30)
+  /// 1..5, enforced by a CHECK constraint in the migration.
+  stars     Int      @db.SmallInt
+  review    String?  @db.VarChar(1000)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, gameId])
+  @@index([gameId, stars])
+  @@map("ratings")
+}
+
+model Favorite {
+  id        String   @id @default(cuid()) @db.VarChar(30)
+  userId    String   @map("user_id") @db.VarChar(30)
+  gameId    String   @map("game_id") @db.VarChar(30)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, gameId])
+  @@index([gameId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("favorites")
+}
+
+model Playlist {
+  id          String             @id @default(cuid()) @db.VarChar(30)
+  userId      String             @map("user_id") @db.VarChar(30)
+  slug        String             @db.VarChar(120)
+  name        String             @db.VarChar(120)
+  description String?            @db.VarChar(500)
+  visibility  PlaylistVisibility @default(private)
+  coverUrl    String?            @map("cover_url") @db.VarChar(500)
+  gamesCount  Int                @default(0) @map("games_count")
+  /// Lets a private playlist be shared by link without making it public.
+  shareToken  String?            @unique @map("share_token") @db.VarChar(40)
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  games PlaylistGame[]
+
+  @@unique([userId, slug])
+  @@index([visibility, updatedAt(sort: Desc)])
+  @@map("playlists")
+}
+
+model PlaylistGame {
+  playlistId String   @map("playlist_id") @db.VarChar(30)
+  gameId     String   @map("game_id") @db.VarChar(30)
+  position   Int      @default(0)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  game     Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@id([playlistId, gameId])
+  @@index([gameId])
+  @@index([playlistId, position])
+  @@map("playlist_game")
+}
+
+// ─────────────────────── play history & analytics ───────────────────────
+
+/// One row per play (the user's History, and the raw material for stats).
+/// Append-only and prunable by `started_at`.
+model GamePlay {
+  id         BigInt     @id @default(autoincrement())
+  gameId     String     @map("game_id") @db.VarChar(30)
+  userId     String?    @map("user_id") @db.VarChar(30)
+  /// Anonymous cookie id, so guests still get "continue playing" and the site
+  /// can compute unique players without storing personal data.
+  sessionId  String?    @map("session_id") @db.VarChar(64)
+  device     DeviceKind @default(unknown)
+  country    String?    @db.VarChar(2)
+  referrer   String?    @db.VarChar(500)
+  utmSource  String?    @map("utm_source") @db.VarChar(80)
+  durationMs Int?       @map("duration_ms")
+  completed  Boolean    @default(false)
+  startedAt  DateTime   @default(now()) @map("started_at") @db.Timestamptz(6)
+
+  game Game  @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([gameId, startedAt(sort: Desc)])
+  @@index([userId, startedAt(sort: Desc)])
+  @@index([sessionId, startedAt(sort: Desc)])
+  @@index([startedAt])
+  @@map("game_plays")
+}
+
+/// Pre-aggregated dashboard rows. The admin charts read this table, never
+/// `game_plays`: a year of traffic is 365 × dimensions rows instead of millions.
+model DailyStat {
+  id            BigInt        @id @default(autoincrement())
+  day           DateTime      @db.Date
+  dimension     StatDimension @default(site)
+  /// '' for site-wide, game id / category slug / source host / country code.
+  key           String        @default("") @db.VarChar(120)
+  gameId        String?       @map("game_id") @db.VarChar(30)
+  views         Int           @default(0)
+  plays         Int           @default(0)
+  uniqueVisitors Int          @default(0) @map("unique_visitors")
+  avgDurationMs Int?          @map("avg_duration_ms")
+  bounceRate    Float?        @map("bounce_rate") @db.Real
+
+  game Game? @relation("game_stats", fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([day, dimension, key])
+  @@index([dimension, day(sort: Desc)])
+  @@index([gameId, day(sort: Desc)])
+  @@map("daily_stats")
+}
+
+// ─────────────────────────── gamification ───────────────────────────
+
+model Achievement {
+  id          String    @id @default(cuid()) @db.VarChar(30)
+  slug        String    @unique @db.VarChar(60)
+  name        String    @db.VarChar(120)
+  description String?   @db.VarChar(255)
+  icon        String?   @db.VarChar(60)
+  tier        BadgeTier @default(bronze)
+  xp          Int       @default(10)
+  /// Declarative rule evaluated by the XP service, e.g.
+  /// {"type":"plays","threshold":50} or {"type":"streak_days","threshold":7}.
+  rule        Json      @default("{}")
+  isHidden    Boolean   @default(false) @map("is_hidden")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  users UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  userId        String    @map("user_id") @db.VarChar(30)
+  achievementId String    @map("achievement_id") @db.VarChar(30)
+  progress      Int       @default(0)
+  unlockedAt    DateTime? @map("unlocked_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@id([userId, achievementId])
+  @@index([achievementId])
+  @@map("user_achievements")
+}
+
+/// XP is a ledger, not just a counter: `users.xp` is the cached sum, this table
+/// is why it has that value (and lets support reverse a mistaken award).
+model XpEvent {
+  id         BigInt       @id @default(autoincrement())
+  userId     String       @map("user_id") @db.VarChar(30)
+  amount     Int          @db.SmallInt
+  reason     String       @db.VarChar(60)
+  targetKind TargetKind?  @map("target_kind")
+  targetId   String?      @map("target_id") @db.VarChar(30)
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([reason, createdAt(sort: Desc)])
+  @@map("xp_events")
+}
+
+model Notification {
+  id      BigInt           @id @default(autoincrement())
+  userId  String           @map("user_id") @db.VarChar(30)
+  kind    NotificationKind @default(system)
+  title   String           @db.VarChar(160)
+  body    String?          @db.VarChar(500)
+  link    String?          @db.VarChar(500)
+  data    Json?
+  readAt  DateTime?        @map("read_at") @db.Timestamptz(6)
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+// ────────────────────────── monetisation ──────────────────────────
+
+/// `ads` holds the raw HTML/JS per placement (AdSense, GAM, Prebid or custom).
+/// Targeting is JSON because "which rows does this ad apply to" is a query the
+/// admin UI builds, not a relation worth normalising.
+model Ad {
+  id          String       @id @default(cuid()) @db.VarChar(30)
+  name        String       @db.VarChar(120)
+  placement   AdPlacement
+  type        AdType       @default(html)
+  status      AdStatus     @default(active)
+  code        String?
+  imageUrl    String?      @map("image_url") @db.VarChar(500)
+  linkUrl     String?      @map("link_url") @db.VarChar(500)
+  priority    Int          @default(0)
+  startsAt    DateTime?    @map("starts_at") @db.Timestamptz(6)
+  endsAt      DateTime?    @map("ends_at") @db.Timestamptz(6)
+  impressions BigInt       @default(0)
+  clicks      BigInt       @default(0)
+  targeting   Json         @default("{}")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([placement, status, priority(sort: Desc)])
+  @@index([status, startsAt, endsAt])
+  @@map("ads")
+}
+
+model Plan {
+  id           String       @id @default(cuid()) @db.VarChar(30)
+  slug         String       @unique @db.VarChar(60)
+  name         String       @db.VarChar(120)
+  description  String?      @db.VarChar(400)
+  priceCents   Int          @map("price_cents")
+  currency     String       @default("usd") @db.VarChar(3)
+  interval     PlanInterval @default(month)
+  removesAds   Boolean      @default(true) @map("removes_ads")
+  features     String[]     @default([])
+  stripePriceId String?     @map("stripe_price_id") @db.VarChar(120)
+  paypalPlanId String?      @map("paypal_plan_id") @db.VarChar(120)
+  isActive     Boolean      @default(true) @map("is_active")
+  sortOrder    Int          @default(0) @map("sort_order")
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  subscriptions Subscription[]
+
+  @@index([isActive, sortOrder])
+  @@map("plans")
+}
+
+model Subscription {
+  id                   String             @id @default(cuid()) @db.VarChar(30)
+  userId               String             @map("user_id") @db.VarChar(30)
+  planId               String             @map("plan_id") @db.VarChar(30)
+  status               SubscriptionStatus @default(incomplete)
+  provider             PaymentProvider    @default(stripe)
+  providerSubscriptionId String?          @unique @map("provider_subscription_id") @db.VarChar(190)
+  currentPeriodStart   DateTime?          @map("current_period_start") @db.Timestamptz(6)
+  currentPeriodEnd     DateTime?          @map("current_period_end") @db.Timestamptz(6)
+  cancelAtPeriodEnd    Boolean            @default(false) @map("cancel_at_period_end")
+  createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan     Plan      @relation(fields: [planId], references: [id], onDelete: Restrict)
+  payments Payment[]
+
+  @@index([userId, status])
+  @@index([status, currentPeriodEnd])
+  @@map("subscriptions")
+}
+
+model Payment {
+  id                BigInt          @id @default(autoincrement())
+  userId            String          @map("user_id") @db.VarChar(30)
+  subscriptionId    String?         @map("subscription_id") @db.VarChar(30)
+  provider          PaymentProvider @default(stripe)
+  providerPaymentId String?         @unique @map("provider_payment_id") @db.VarChar(190)
+  amountCents       Int             @map("amount_cents")
+  currency          String          @default("usd") @db.VarChar(3)
+  status            PaymentStatus   @default(pending)
+  meta              Json?
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("payments")
+}
+
+// ───────────────────── content, CMS & site config ─────────────────────
+
+model Page {
+  id       String        @id @default(cuid()) @db.VarChar(30)
+  slug     String        @unique @db.VarChar(160)
+  title    String        @db.VarChar(200)
+  titleEn  String?       @map("title_en") @db.VarChar(200)
+  body     String?
+  /// Page-builder output: ordered array of typed blocks
+  /// ({"type":"hero","props":{…}}, {"type":"game_grid",…}). JSON, not a blocks
+  /// table: a page is saved and versioned as one atomic document.
+  blocks   Json          @default("[]")
+  template String        @default("default") @db.VarChar(40)
+  status   ContentStatus @default(draft)
+  isIndexed Boolean      @default(true) @map("is_indexed")
+
+  seoTitle       String? @map("seo_title") @db.VarChar(200)
+  seoDescription String? @map("seo_description") @db.VarChar(400)
+  canonicalUrl   String? @map("canonical_url") @db.VarChar(500)
+
+  sortOrder Int       @default(0) @map("sort_order")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  @@index([status, sortOrder])
+  @@map("pages")
+}
+
+model BlogCategory {
+  id          String   @id @default(cuid()) @db.VarChar(30)
+  slug        String   @unique @db.VarChar(120)
+  name        String   @db.VarChar(120)
+  description String?
+  parentId    String?  @map("parent_id") @db.VarChar(30)
+  sortOrder   Int      @default(0) @map("sort_order")
+  postsCount  Int      @default(0) @map("posts_count")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  parent   BlogCategory?  @relation("blog_category_tree", fields: [parentId], references: [id], onDelete: SetNull)
+  children BlogCategory[] @relation("blog_category_tree")
+  posts    BlogPost[]
+
+  @@index([parentId, sortOrder])
+  @@map("blog_categories")
+}
+
+model BlogPost {
+  id             String        @id @default(cuid()) @db.VarChar(30)
+  slug           String        @unique @db.VarChar(200)
+  title          String        @db.VarChar(200)
+  excerpt        String?       @db.VarChar(500)
+  /// Markdown as authored; the renderer lives in the web app (no HTML stored
+  /// from an editor = no stored XSS surface).
+  body           String
+  coverImage     String?       @map("cover_image") @db.VarChar(500)
+  authorId       String        @map("author_id") @db.VarChar(30)
+  categoryId     String?       @map("category_id") @db.VarChar(30)
+  status         ContentStatus @default(draft)
+  publishedAt    DateTime?     @map("published_at") @db.Timestamptz(6)
+  readingMinutes Int           @default(1) @map("reading_minutes") @db.SmallInt
+  views          Int           @default(0)
+
+  seoTitle       String? @map("seo_title") @db.VarChar(200)
+  seoDescription String? @map("seo_description") @db.VarChar(400)
+  canonicalUrl   String? @map("canonical_url") @db.VarChar(500)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  author   User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  category BlogCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  tags     BlogPostTag[]
+  comments Comment[]
+
+  @@index([status, publishedAt(sort: Desc)])
+  @@index([categoryId, status])
+  @@index([authorId])
+  @@map("blog_posts")
+}
+
+model BlogPostTag {
+  postId String @map("post_id") @db.VarChar(30)
+  tagId  String @map("tag_id") @db.VarChar(30)
+
+  post BlogPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tag  Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+  @@index([tagId])
+  @@map("blog_post_tag")
+}
+
+/// Site settings the admin changes without a deploy. `value` is JSON so one row
+/// can hold a colour, a number, a nested theme object or a block of HTML;
+/// `is_public` decides whether `/api/settings/public` may expose it to the web.
+model Setting {
+  key         String      @id @db.VarChar(120)
+  value       Json
+  type        SettingType @default(string)
+  group       String      @default("general") @db.VarChar(40)
+  isPublic    Boolean     @default(false) @map("is_public")
+  description String?     @db.VarChar(255)
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([group])
+  @@map("settings")
+}
+
+/// Homepage / page sections with drag & drop ordering (no code deploy to
+/// rearrange the front page).
+model Section {
+  id        String      @id @default(cuid()) @db.VarChar(30)
+  page      String      @default("home") @db.VarChar(40)
+  kind      SectionKind @default(game_grid)
+  title     String?     @db.VarChar(160)
+  titleEn   String?     @map("title_en") @db.VarChar(160)
+  subtitle  String?     @db.VarChar(255)
+  /// Query/props for the block: {"category":"action","limit":24,"order":"plays"}
+  config    Json        @default("{}")
+  sortOrder Int         @default(0) @map("sort_order")
+  isVisible Boolean     @default(true) @map("is_visible")
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([page, isVisible, sortOrder])
+  @@map("sections")
+}
+
+/// Switchable themes (more than the fixed four a competitor ships): a theme is
+/// a row of design tokens, and the web app maps them onto CSS variables.
+model Theme {
+  id         String   @id @default(cuid()) @db.VarChar(30)
+  slug       String   @unique @db.VarChar(60)
+  name       String   @db.VarChar(120)
+  isActive   Boolean  @default(true) @map("is_active")
+  isDefault  Boolean  @default(false) @map("is_default")
+  config     Json     @default("{}")
+  previewUrl String?  @map("preview_url") @db.VarChar(500)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("themes")
+}
+
+/// Pretty-URL customisation and 301s from old slugs: renaming a game must not
+/// throw away the ranking it already earned.
+model Redirect {
+  id         String   @id @default(cuid()) @db.VarChar(30)
+  sourcePath String   @unique @map("source_path") @db.VarChar(500)
+  targetPath String   @map("target_path") @db.VarChar(500)
+  statusCode Int      @default(301) @map("status_code") @db.SmallInt
+  isActive   Boolean  @default(true) @map("is_active")
+  hits       Int      @default(0)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([isActive])
+  @@map("redirects")
+}
+
+// ───────────────────────── moderation & audit ─────────────────────────
+
+model Report {
+  id         String        @id @default(cuid()) @db.VarChar(30)
+  reporterId String?       @map("reporter_id") @db.VarChar(30)
+  targetKind TargetKind    @map("target_kind")
+  targetId   String        @map("target_id") @db.VarChar(30)
+  reason     ReportReason  @default(other)
+  details    String?       @db.VarChar(1000)
+  status     ReportStatus  @default(open)
+  moderatorId String?      @map("moderator_id") @db.VarChar(30)
+  resolution String?       @db.VarChar(500)
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  resolvedAt DateTime?     @map("resolved_at") @db.Timestamptz(6)
+
+  reporter  User? @relation("reporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  moderator User? @relation("moderator", fields: [moderatorId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([targetKind, targetId])
+  @@index([reporterId])
+  @@map("reports")
+}
+
+/// Append-only admin audit trail ("who unpublished that game at 3am").
+/// `before`/`after` are JSON snapshots so the log answers the question without
+/// the row still existing.
+model ActivityLog {
+  id         BigInt   @id @default(autoincrement())
+  actorId    String?  @map("actor_id") @db.VarChar(30)
+  actorLabel String?  @map("actor_label") @db.VarChar(120)
+  action     String   @db.VarChar(80)
+  targetKind TargetKind? @map("target_kind")
+  targetId   String?  @map("target_id") @db.VarChar(30)
+  before     Json?
+  after      Json?
+  ip         String?  @db.VarChar(45)
+  userAgent  String?  @map("user_agent") @db.VarChar(400)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@index([targetKind, targetId])
+  @@map("activity_logs")
+}
+
+// ─────────────────── provider import (auto-fetch) ───────────────────
+
+model Provider {
+  id                   String        @id @default(cuid()) @db.VarChar(30)
+  slug                 String        @unique @db.VarChar(40)
+  name                 String        @db.VarChar(120)
+  kind                 ProviderKind  @default(custom)
+  baseUrl              String?       @map("base_url") @db.VarChar(500)
+  feedUrl              String?       @map("feed_url") @db.VarChar(500)
+  apiKey               String?       @map("api_key") @db.VarChar(255)
+  isActive             Boolean       @default(true) @map("is_active")
+  syncIntervalMinutes  Int           @default(360) @map("sync_interval_minutes")
+  lastSyncAt           DateTime?     @map("last_sync_at") @db.Timestamptz(6)
+  lastStatus           ImportStatus? @map("last_status")
+  /// Per-provider mapping/normalisation options (categories map, thumb size…).
+  settings             Json          @default("{}")
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  items ProviderItem[]
+  jobs  ImportJob[]
+
+  @@map("providers")
+}
+
+/// Staging table: everything a feed returns lands here first, judged by
+/// `source_hash` before it is allowed to become a `games` row. That is where
+/// duplicate detection actually happens, and it keeps a rejected item visible
+/// for debugging instead of silently vanishing.
+model ProviderItem {
+  id             BigInt             @id @default(autoincrement())
+  providerId     String             @map("provider_id") @db.VarChar(30)
+  providerGameId String             @map("provider_game_id") @db.VarChar(120)
+  sourceHash     String             @unique @map("source_hash") @db.VarChar(64)
+  title          String?            @db.VarChar(200)
+  payload        Json               @default("{}")
+  status         ProviderItemStatus @default(new)
+  gameId         String?            @map("game_id") @db.VarChar(30)
+  error          String?            @db.VarChar(500)
+  fetchedAt      DateTime           @default(now()) @map("fetched_at") @db.Timestamptz(6)
+  importedAt     DateTime?          @map("imported_at") @db.Timestamptz(6)
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  game     Game?    @relation(fields: [gameId], references: [id], onDelete: SetNull)
+
+  @@index([providerId, status])
+  @@index([fetchedAt(sort: Desc)])
+  @@map("provider_items")
+}
+
+model ImportJob {
+  id              BigInt       @id @default(autoincrement())
+  providerId      String       @map("provider_id") @db.VarChar(30)
+  status          ImportStatus @default(queued)
+  triggeredBy     String       @default("cron") @map("triggered_by") @db.VarChar(20)
+  actorId         String?      @map("actor_id") @db.VarChar(30)
+  cursor          String?      @db.VarChar(200)
+  fetchedCount    Int          @default(0) @map("fetched_count")
+  importedCount   Int          @default(0) @map("imported_count")
+  duplicateCount  Int          @default(0) @map("duplicate_count")
+  failedCount     Int          @default(0) @map("failed_count")
+  startedAt       DateTime?    @map("started_at") @db.Timestamptz(6)
+  finishedAt      DateTime?    @map("finished_at") @db.Timestamptz(6)
+  error           String?      @db.VarChar(1000)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  actor    User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([providerId, createdAt(sort: Desc)])
+  @@index([status])
+  @@map("import_jobs")
+}
+
+// ─────────────────────── self-update & backups ───────────────────────
+
+/// Release catalogue for the in-place updater. `checksum_sha256` is mandatory in
+/// the updater: an update whose hash does not match is not applied, and a backup
+/// is taken first (see `backups`).
+model Release {
+  id            String    @id @default(cuid()) @db.VarChar(30)
+  version       String    @unique @db.VarChar(30)
+  channel       String    @default("stable") @db.VarChar(20)
+  notes         String?
+  packageUrl    String?   @map("package_url") @db.VarChar(500)
+  checksumSha256 String?  @map("checksum_sha256") @db.VarChar(64)
+  sizeBytes     BigInt?   @map("size_bytes")
+  isMandatory   Boolean   @default(false) @map("is_mandatory")
+  minSchemaVersion Int?   @map("min_schema_version")
+  releasedAt    DateTime? @map("released_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([channel, releasedAt(sort: Desc)])
+  @@map("releases")
+}
+
+model Backup {
+  id             String       @id @default(cuid()) @db.VarChar(30)
+  kind           BackupKind   @default(database)
+  status         BackupStatus @default(pending)
+  path           String?      @db.VarChar(500)
+  storageKey     String?      @map("storage_key") @db.VarChar(500)
+  sizeBytes      BigInt?      @map("size_bytes")
+  checksumSha256 String?      @map("checksum_sha256") @db.VarChar(64)
+  trigger        String       @default("manual") @db.VarChar(30)
+  meta           Json?
+  error          String?      @db.VarChar(500)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  finishedAt     DateTime?    @map("finished_at") @db.Timestamptz(6)
+
+  @@index([createdAt(sort: Desc)])
+  @@map("backups")
+}

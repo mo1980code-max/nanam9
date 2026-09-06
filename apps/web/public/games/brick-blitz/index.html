@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>Brick Blitz</title>
+<style>
+  :root{color-scheme:dark}*{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#0b0716;overflow:hidden;font-family:system-ui,"Segoe UI",Roboto,sans-serif}
+  canvas{display:block;width:100%;height:100%;touch-action:none;
+    background:radial-gradient(900px 500px at 50% -10%,#2a1350 0%,#0b0716 65%)}
+  #hud{position:fixed;top:10px;left:0;right:0;display:flex;justify-content:center;gap:20px;color:#f3e8ff;
+    font-weight:800;font-size:clamp(14px,3.6vw,22px);text-shadow:0 0 14px #b06bff;pointer-events:none}
+  #start{position:fixed;inset:0;display:grid;place-items:center;background:rgba(8,4,18,.78)}
+  #start div{text-align:center;color:#e6d7ff}
+  #start button{margin-top:14px;padding:14px 34px;border:0;border-radius:999px;font:800 18px system-ui;cursor:pointer;color:#1a0730;
+    background:linear-gradient(135deg,#ffb03a,#ff5ea8);box-shadow:0 10px 40px rgba(255,120,180,.4)}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"><span id="s">النقاط 0</span><span id="l">♥♥♥</span><span id="w">الموجة 1</span></div>
+<div id="start"><div><h1 style="font-size:clamp(22px,6vw,40px)">Brick Blitz</h1>
+  <p style="margin-top:8px;opacity:.8">حرّك بالمؤشر أو ← → · ٣ أرواح · موجات لا تنتهي</p>
+  <button id="go">ابدأ · Play</button></div></div>
+<script>
+(function () {
+  var host = window.parent !== window ? window.parent : null;
+  function post(m) { try { host && host.postMessage(Object.assign({ source: 'voltade-game' }, m), '*'); } catch (e) {} }
+
+  var c = document.getElementById('c'), x = c.getContext('2d');
+  var W = 0, H = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  function resize() { W = c.clientWidth; H = c.clientHeight; c.width = W * dpr; c.height = H * dpr; x.setTransform(dpr, 0, 0, dpr, 0, 0); layout(); }
+  window.addEventListener('resize', resize);
+
+  var padW = 110, padH = 14, padX = 0, ball = { x: 0, y: 0, vx: 0, vy: 0, r: 8 };
+  var bricks = [], cols = 9, rows = 5, score = 0, lives = 3, wave = 1, run = false, stuck = true;
+
+  function layout() {
+    padW = Math.max(70, Math.min(150, W * 0.18));
+    padX = Math.max(0, Math.min(W - padW, padX || (W - padW) / 2));
+    var gap = 6, top = H * 0.14, bw = (W - gap * (cols + 1)) / cols, bh = Math.max(14, Math.min(26, H * 0.035));
+    bricks = [];
+    for (var r = 0; r < rows; r++) for (var i = 0; i < cols; i++) {
+      bricks.push({ x: gap + i * (bw + gap), y: top + r * (bh + gap), w: bw, h: bh, hp: r < 2 ? 2 : 1, hue: 265 - r * 22 });
+    }
+  }
+  function resetBall() { ball.x = padX + padW / 2; ball.y = H - padH - 30; ball.vx = 0; ball.vy = 0; stuck = true; }
+  function launch() {
+    if (!stuck) return;
+    var s = Math.min(9, W * 0.006 + 4.5), a = -Math.PI / 2 + (Math.random() * 0.6 - 0.3);
+    ball.vx = Math.cos(a) * s; ball.vy = Math.sin(a) * s; stuck = false;
+  }
+  function start() {
+    score = 0; lives = 3; wave = 1; run = true; layout(); resetBall(); hud();
+    document.getElementById('start').classList.add('hidden');
+    post({ type: 'voltade:ready' }); loop();
+  }
+  function hud() {
+    document.getElementById('s').textContent = 'النقاط ' + score;
+    document.getElementById('l').textContent = '♥'.repeat(Math.max(0, lives)) || '—';
+    document.getElementById('w').textContent = 'الموجة ' + wave;
+  }
+  function nextWave() {
+    wave++; rows = Math.min(8, 4 + Math.floor(wave / 2)); layout(); resetBall(); hud();
+    post({ type: 'voltade:score', score: score, wave: wave });
+  }
+  function die() {
+    run = false;
+    document.getElementById('start').classList.remove('hidden');
+    document.getElementById('go').textContent = 'العب مجددًا · Again';
+    document.querySelector('#start p').textContent = 'انتهت اللعبة — نقاطك ' + score;
+    post({ type: 'voltade:complete', score: score });
+  }
+  function loop() {
+    if (!run) return;
+    if (stuck) { ball.x = padX + padW / 2; ball.y = H - padH - 22; }
+    else {
+      ball.x += ball.vx; ball.y += ball.vy;
+      if (ball.x < ball.r || ball.x > W - ball.r) { ball.vx *= -1; ball.x = Math.max(ball.r, Math.min(W - ball.r, ball.x)); }
+      if (ball.y < ball.r) { ball.vy = Math.abs(ball.vy); }
+      if (ball.y > H + 30) { lives--; hud(); if (lives <= 0) return die(); resetBall(); }
+      if (ball.y + ball.r >= H - padH && ball.y < H && ball.x > padX && ball.x < padX + padW && ball.vy > 0) {
+        var o = (ball.x - (padX + padW / 2)) / (padW / 2);
+        var sp = Math.min(12, Math.hypot(ball.vx, ball.vy) * 1.02);
+        ball.vx = o * sp * 0.85; ball.vy = -Math.abs(Math.sqrt(Math.max(1, sp * sp - ball.vx * ball.vx)));
+        ball.y = H - padH - ball.r;
+      }
+      for (var i = 0; i < bricks.length; i++) {
+        var b = bricks[i];
+        if (ball.x + ball.r > b.x && ball.x - ball.r < b.x + b.w && ball.y + ball.r > b.y && ball.y - ball.r < b.y + b.h) {
+          var fromX = Math.min(Math.abs(ball.x - b.x), Math.abs(ball.x - (b.x + b.w)));
+          var fromY = Math.min(Math.abs(ball.y - b.y), Math.abs(ball.y - (b.y + b.h)));
+          if (fromX < fromY) ball.vx *= -1; else ball.vy *= -1;
+          b.hp--;
+          if (b.hp <= 0) { bricks.splice(i, 1); score += 12; } else { score += 4; }
+          hud(); post({ type: 'voltade:score', score: score });
+          break;
+        }
+      }
+      if (bricks.length === 0) nextWave();
+    }
+    x.clearRect(0, 0, W, H);
+    bricks.forEach(function (b) {
+      x.shadowBlur = 12; x.shadowColor = 'hsl(' + b.hue + ' 90% 60%)';
+      x.fillStyle = 'hsl(' + b.hue + ' 85% ' + (b.hp > 1 ? 62 : 52) + '%)';
+      x.beginPath();
+      if (x.roundRect) x.roundRect(b.x, b.y, b.w, b.h, 6); else x.rect(b.x, b.y, b.w, b.h);
+      x.fill();
+    });
+    x.shadowBlur = 20; x.shadowColor = '#ff5ea8';
+    x.fillStyle = '#ffe6f4'; x.beginPath(); x.arc(ball.x, ball.y, ball.r, 0, 7); x.fill();
+    x.shadowColor = '#ffb03a'; x.fillStyle = '#fff3dc';
+    x.beginPath();
+    if (x.roundRect) x.roundRect(padX, H - padH, padW, padH, 7); else x.rect(padX, H - padH, padW, padH);
+    x.fill(); x.shadowBlur = 0;
+    requestAnimationFrame(loop);
+  }
+  function move(cx) { padX = Math.max(0, Math.min(W - padW, cx - padW / 2)); }
+  c.addEventListener('pointermove', function (e) { move(e.clientX); });
+  c.addEventListener('pointerdown', function (e) { move(e.clientX); launch(); });
+  window.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowLeft') { padX = Math.max(0, padX - 38); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { padX = Math.min(W - padW, padX + 38); e.preventDefault(); }
+    if (e.key === ' ' || e.key === 'ArrowUp') { launch(); e.preventDefault(); }
+  });
+  document.getElementById('go').addEventListener('click', start);
+  resize(); post({ type: 'voltade:ready' });
+})();
+</script>
+</body>
+</html>

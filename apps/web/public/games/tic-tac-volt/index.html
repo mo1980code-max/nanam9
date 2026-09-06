@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Tic Tac Volt</title>
+<style>
+  :root{color-scheme:dark}*{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#090d1a;color:#eef2ff;overflow:hidden;font-family:system-ui,"Segoe UI",Roboto,sans-serif}
+  #app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:14px}
+  h1{font-size:clamp(20px,5vw,30px);background:linear-gradient(135deg,#ff8fb1,#7aa2ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  #grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:min(88vw,360px)}
+  .sq{aspect-ratio:1;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);
+    display:grid;place-items:center;font-size:clamp(30px,10vw,52px);font-weight:800;cursor:pointer;transition:background .15s}
+  .sq:hover{background:rgba(255,255,255,.09)}
+  .sq.x{color:#7aa2ff;text-shadow:0 0 18px rgba(122,162,255,.6)}
+  .sq.o{color:#ff8fb1;text-shadow:0 0 18px rgba(255,143,177,.6)}
+  .sq.win{background:rgba(94,231,180,.18);border-color:rgba(94,231,180,.5)}
+  #status{font-weight:700;opacity:.85}
+  select,button{padding:10px 18px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.07);
+    color:#eef2ff;font:700 14px system-ui;cursor:pointer}
+  button{background:linear-gradient(135deg,#7aa2ff,#c98bff);color:#0a0d1a;border:0}
+  #row{display:flex;gap:10px;align-items:center}
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>Tic Tac Volt</h1>
+  <div id="grid"></div>
+  <div id="status">دورك — أنت X</div>
+  <div id="row">
+    <select id="level"><option value="easy">سهل</option><option value="normal" selected>عادي</option><option value="hard">صعب (لا يُهزم)</option></select>
+    <button id="again">جولة جديدة</button>
+  </div>
+</div>
+<script>
+(function () {
+  var host = window.parent !== window ? window.parent : null;
+  function post(m) { try { host && host.postMessage(Object.assign({ source: 'voltade-game' }, m), '*'); } catch (e) {} }
+  var LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  var board, over, grid = document.getElementById('grid'), status = document.getElementById('status'), wins = 0;
+
+  function build() {
+    board = Array(9).fill(null); over = false; grid.innerHTML = '';
+    status.textContent = 'دورك — أنت X';
+    for (var i = 0; i < 9; i++) {
+      var sq = document.createElement('div'); sq.className = 'sq'; sq.dataset.i = i;
+      sq.addEventListener('click', play); grid.appendChild(sq);
+    }
+    post({ type: 'voltade:ready' });
+  }
+  function paint() {
+    Array.prototype.forEach.call(grid.children, function (el, i) {
+      var v = board[i];
+      el.textContent = v || ''; el.className = 'sq' + (v ? ' ' + v.toLowerCase() : '');
+    });
+  }
+  function winner(b) {
+    for (var i = 0; i < LINES.length; i++) {
+      var l = LINES[i], v = b[l[0]];
+      if (v && b[l[1]] === v && b[l[2]] === v) return { player: v, line: l };
+    }
+    return b.every(Boolean) ? { player: 'draw' } : null;
+  }
+  function play(e) {
+    if (over) return;
+    var i = Number(e.currentTarget.dataset.i);
+    if (board[i]) return;
+    board[i] = 'X'; paint();
+    if (finish()) return;
+    status.textContent = 'يفكّر الخصم…';
+    setTimeout(function () { board[aiMove()] = 'O'; paint(); finish(); }, 240);
+  }
+  function finish() {
+    var w = winner(board);
+    if (!w) { status.textContent = 'دورك — أنت X'; return false; }
+    over = true;
+    if (w.line) w.line.forEach(function (i) { grid.children[i].classList.add('win'); });
+    if (w.player === 'X') { wins++; status.textContent = 'فزت! 🎉 (' + wins + ')'; post({ type: 'voltade:complete', score: 100, won: true }); }
+    else if (w.player === 'O') { status.textContent = 'خسرت — حاول مجددًا'; post({ type: 'voltade:complete', score: 10, won: false }); }
+    else { status.textContent = 'تعادل'; post({ type: 'voltade:complete', score: 40, won: false }); }
+    return true;
+  }
+  function aiMove() {
+    var level = document.getElementById('level').value;
+    var free = board.map(function (v, i) { return v ? -1 : i; }).filter(function (i) { return i >= 0; });
+    if (level === 'easy') return free[(Math.random() * free.length) | 0];
+    if (level === 'normal' && Math.random() < 0.45) return free[(Math.random() * free.length) | 0];
+    // minimax with alpha-beta: on "hard" the best a human can do is a draw.
+    var bestScore = -Infinity, move = free[0];
+    free.forEach(function (i) {
+      board[i] = 'O';
+      var s = minimax(board, 0, false, -Infinity, Infinity);
+      board[i] = null;
+      if (s > bestScore) { bestScore = s; move = i; }
+    });
+    return move;
+  }
+  function minimax(b, depth, isMax, alpha, beta) {
+    var w = winner(b);
+    if (w) return w.player === 'O' ? 10 - depth : w.player === 'X' ? depth - 10 : 0;
+    var best = isMax ? -Infinity : Infinity;
+    for (var i = 0; i < 9; i++) {
+      if (b[i]) continue;
+      b[i] = isMax ? 'O' : 'X';
+      best = isMax ? Math.max(best, minimax(b, depth + 1, false, alpha, beta)) : Math.min(best, minimax(b, depth + 1, true, alpha, beta));
+      b[i] = null;
+      if (isMax) alpha = Math.max(alpha, best); else beta = Math.min(beta, best);
+      if (beta <= alpha) break;
+    }
+    return best;
+  }
+  document.getElementById('again').addEventListener('click', build);
+  build();
+})();
+</script>
+</body>
+</html>

@@ -9,3 +9,27 @@ vendor/
 __pycache__/
 *.pyc
 dist/
+
+# ── Voltade (TypeScript monorepo) ──────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.sample
+*.tsbuildinfo
+.turbo/
+.next/
+.swc/
+coverage/
+dist/
+build/
+# NOTE: apps/web/public/sw.js is *source* (hand-written, no workbox build step),
+# so it is deliberately NOT ignored. Only generated bundler output is.
+apps/web/public/workbox-*.js
+# local dev database (PGlite = real PostgreSQL compiled to WASM, files on disk)
+.var/
+.var-pglite/
+packages/db/.data/
+storage/
+uploads/
+*.log
+npm-debug.log*

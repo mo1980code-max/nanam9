@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>Snake Volt</title>
+<style>
+  :root{color-scheme:dark}*{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#06120f;overflow:hidden;font-family:system-ui,"Segoe UI",Roboto,sans-serif}
+  #wrap{position:fixed;inset:0;display:grid;place-items:center}
+  canvas{background:linear-gradient(180deg,#08201a,#06120f);width:100%;height:100%;touch-action:none}
+  #hud{position:fixed;top:10px;left:0;right:0;display:flex;justify-content:center;gap:22px;color:#c8ffe9;
+    font-weight:800;font-size:clamp(16px,4vw,26px);text-shadow:0 0 16px #16d69a;pointer-events:none}
+  #start{position:fixed;inset:0;display:grid;place-items:center;background:rgba(2,12,9,.75)}
+  #start button{padding:14px 34px;border:0;border-radius:999px;font:800 18px system-ui;cursor:pointer;color:#04120d;
+    background:linear-gradient(135deg,#25e39a,#8ef7c1);box-shadow:0 10px 40px rgba(37,227,154,.4)}
+  #pad{position:fixed;bottom:14px;left:0;right:0;display:none;justify-content:center;gap:10px}
+  #pad button{width:58px;height:58px;border-radius:16px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.07);color:#eafff6;font-size:22px}
+  @media (pointer:coarse){#pad{display:flex}}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="hud"><span id="s">0</span><span>·</span><span id="b">أفضل: 0</span></div>
+<div id="start"><button id="go">ابدأ · Play</button></div>
+<div id="pad">
+  <button data-d="left">◀</button><button data-d="up">▲</button><button data-d="down">▼</button><button data-d="right">▶</button>
+</div>
+<script>
+(function () {
+  var host = window.parent !== window ? window.parent : null;
+  function post(m) { try { host && host.postMessage(Object.assign({ source: 'voltade-game' }, m), '*'); } catch (e) {} }
+
+  var N = 20, c = document.getElementById('c'), x = c.getContext('2d');
+  var W = 0, H = 0, cell = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  function resize() {
+    W = c.clientWidth; H = c.clientHeight;
+    c.width = W * dpr; c.height = H * dpr; x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cell = Math.floor(Math.min(W, H) / N);
+    if (run) draw();
+  }
+  window.addEventListener('resize', resize); resize();
+
+  var snake = [], dir = { x: 1, y: 0 }, next = dir, food = { x: 3, y: 3 };
+  var score = 0, best = Number(localStorage.getItem('voltade.snake.best') || 0);
+  var run = false, timer = null, speed = 150;
+  document.getElementById('b').textContent = 'أفضل: ' + best;
+
+  function place() {
+    do { food = { x: (Math.random() * N) | 0, y: (Math.random() * N) | 0 }; }
+    while (snake.some(function (s) { return s.x === food.x && s.y === food.y; }));
+  }
+  function start() {
+    snake = [{ x: N / 2 | 0, y: N / 2 | 0 }]; dir = { x: 1, y: 0 }; next = dir;
+    score = 0; speed = 150; place(); run = true;
+    document.getElementById('s').textContent = '0';
+    document.getElementById('start').classList.add('hidden');
+    post({ type: 'voltade:ready' });
+    clearInterval(timer); timer = setInterval(tick, speed); draw();
+  }
+  function tick() {
+    dir = next;
+    var h = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+    if (h.x < 0 || h.y < 0 || h.x >= N || h.y >= N || snake.some(function (s) { return s.x === h.x && s.y === h.y; })) return die();
+    snake.unshift(h);
+    if (h.x === food.x && h.y === food.y) {
+      score += 10;
+      document.getElementById('s').textContent = score;
+      post({ type: 'voltade:score', score: score });
+      place();
+      if (speed > 70) { speed -= 4; clearInterval(timer); timer = setInterval(tick, speed); }
+    } else snake.pop();
+    draw();
+  }
+  function die() {
+    run = false; clearInterval(timer);
+    if (score > best) {
+      best = score; localStorage.setItem('voltade.snake.best', String(best));
+      document.getElementById('b').textContent = 'أفضل: ' + best;
+    }
+    document.getElementById('go').textContent = 'العب مجددًا · Again';
+    document.getElementById('start').classList.remove('hidden');
+    post({ type: 'voltade:complete', score: score });
+  }
+  function draw() {
+    x.clearRect(0, 0, W, H);
+    var ox = (W - cell * N) / 2, oy = (H - cell * N) / 2;
+    x.strokeStyle = 'rgba(255,255,255,.045)'; x.lineWidth = 1;
+    for (var i = 0; i <= N; i++) {
+      x.beginPath(); x.moveTo(ox + i * cell, oy); x.lineTo(ox + i * cell, oy + N * cell); x.stroke();
+      x.beginPath(); x.moveTo(ox, oy + i * cell); x.lineTo(ox + N * cell, oy + i * cell); x.stroke();
+    }
+    x.shadowBlur = 18; x.shadowColor = '#ff5d7a'; x.fillStyle = '#ff8fa3';
+    x.beginPath(); x.arc(ox + food.x * cell + cell / 2, oy + food.y * cell + cell / 2, cell * 0.32, 0, 7); x.fill();
+    snake.forEach(function (s, i) {
+      var t = i / Math.max(snake.length, 1);
+      x.shadowBlur = i === 0 ? 20 : 8; x.shadowColor = '#25e39a';
+      x.fillStyle = i === 0 ? '#d9fff0' : 'rgba(37,227,154,' + (1 - t * 0.55) + ')';
+      var p = Math.max(1, cell * 0.12);
+      x.beginPath();
+      if (x.roundRect) x.roundRect(ox + s.x * cell + p, oy + s.y * cell + p, cell - p * 2, cell - p * 2, cell * 0.28);
+      else x.rect(ox + s.x * cell + p, oy + s.y * cell + p, cell - p * 2, cell - p * 2);
+      x.fill();
+    });
+    x.shadowBlur = 0;
+  }
+  function turn(d) {
+    var m = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } }[d];
+    if (m && (m.x !== -dir.x || m.y !== -dir.y)) next = m;
+  }
+  window.addEventListener('keydown', function (e) {
+    var k = e.key;
+    if (k === 'ArrowUp' || k === 'w') { turn('up'); e.preventDefault(); }
+    if (k === 'ArrowDown' || k === 's') { turn('down'); e.preventDefault(); }
+    if (k === 'ArrowLeft' || k === 'a') { turn('left'); e.preventDefault(); }
+    if (k === 'ArrowRight' || k === 'd') { turn('right'); e.preventDefault(); }
+  });
+  document.querySelectorAll('#pad button').forEach(function (b) {
+    b.addEventListener('click', function () { turn(b.dataset.d); });
+  });
+  var sx = 0, sy = 0;
+  c.addEventListener('touchstart', function (e) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+  c.addEventListener('touchend', function (e) {
+    var dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+    if (Math.abs(dx) > Math.abs(dy)) turn(dx > 0 ? 'right' : 'left'); else turn(dy > 0 ? 'down' : 'up');
+  }, { passive: true });
+  document.getElementById('go').addEventListener('click', start);
+  draw(); post({ type: 'voltade:ready' });
+})();
+</script>
+</body>
+</html>
