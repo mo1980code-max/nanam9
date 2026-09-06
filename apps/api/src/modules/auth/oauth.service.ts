@@ -18,7 +18,7 @@
  */
 
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { Database, ID } from '@voltade/db';
 import { slugify } from '@voltade/shared';
 import { DATABASE } from '../../common/database/database.module.js';
@@ -83,19 +83,50 @@ export class OauthService {
 
   isEnabled(provider: string): boolean {
     const spec = this.spec(provider);
-    const creds = this.credentials(provider);
-    return Boolean(spec && creds.id && creds.secret);
+    return Boolean(spec) && (this.hasCreds(provider) || this.devMode(provider));
   }
 
-  listEnabled(): { provider: string; enabled: boolean }[] {
-    return Object.keys(PROVIDERS).map((provider) => ({ provider, enabled: this.isEnabled(provider) }));
+  listEnabled(): { provider: string; enabled: boolean; dev: boolean }[] {
+    return Object.keys(PROVIDERS).map((provider) => ({
+      provider,
+      enabled: this.isEnabled(provider),
+      dev: this.devMode(provider) && !this.hasCreds(provider),
+    }));
+  }
+
+  private hasCreds(provider: string): boolean {
+    const creds = this.credentials(provider);
+    return Boolean(creds.id && creds.secret);
+  }
+
+  /**
+   * The local consent screen, for one reason only: a portal demo without Google
+   * client credentials would otherwise show a sign-in button that dies with 501.
+   *
+   * Hard guards, in order: never in production (NODE_ENV), never unless the
+   * operator explicitly opts in with VOLTADE_DEV_OAUTH=1, and never when real
+   * credentials exist (those always win). It issues the same session a real
+   * Google callback would, through the same completeSignIn() path — the only
+   * invented value is the provider user id, derived from the chosen e-mail.
+   */
+  devMode(provider: string): boolean {
+    if (process.env.NODE_ENV === 'production') return false;
+    if (process.env.VOLTADE_DEV_OAUTH !== '1') return false;
+    return Boolean(PROVIDERS[provider]);
   }
 
   /** The provider's authorize URL plus the `state` value to store in the cookie. */
   buildAuthorizeUrl(provider: string, redirectUri: string, returnTo?: string): { url: string; state: string } {
     this.spec(provider);
     const { id } = this.credentials(provider);
-    if (!id) throw new AppError(`oauth.${provider}.disabled`, `${provider} sign-in is not configured`, 501);
+    if (!id) {
+      if (!this.devMode(provider)) throw new AppError(`oauth.${provider}.disabled`, `${provider} sign-in is not configured`, 501);
+      // No real credentials + dev opt-in: point the browser at our own consent
+      // screen instead of Google's. The state cookie flow is identical, so the
+      // CSRF protection of the real flow is exercised here too.
+      const state = randomBytes(24).toString('base64url');
+      return { url: `/api/auth/oauth/dev/consent?provider=${encodeURIComponent(provider)}&state=${state}`, state };
+    }
 
     const state = randomBytes(24).toString('base64url');
     const params = new URLSearchParams({
@@ -121,7 +152,39 @@ export class OauthService {
   ): Promise<{ tokens: IssuedTokens; userId: ID; username: string; isNew: boolean }> {
     this.spec(provider);
     const profile = await this.exchange(provider, code, redirectUri);
+    return this.completeSignIn(provider, profile, meta);
+  }
 
+  /** Dev-consent entry point: same sign-in, profile supplied by the consent screen. */
+  async devApprove(
+    provider: string,
+    input: { email: string; name: string },
+    meta: { ip?: string | null; userAgent?: string | null },
+  ): Promise<{ tokens: IssuedTokens; userId: ID; username: string; isNew: boolean }> {
+    if (!this.devMode(provider) || this.hasCreds(provider)) {
+      throw new AppError(`oauth.${provider}.disabled`, `${provider} sign-in is not configured`, 501);
+    }
+    const email = input.email.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new AppError('oauth.bad_email', 'the consent screen needs a valid e-mail', 400);
+    const profile: OAuthProfile = {
+      providerUserId: `dev-${createHash('sha1').update(email).digest('hex').slice(0, 16)}`,
+      email,
+      emailVerified: true,
+      name: input.name.trim() || email.split('@')[0] || email,
+      avatarUrl: null,
+      accessToken: null,
+      refreshToken: null,
+      expiresAt: null,
+    };
+    return this.completeSignIn(provider, profile, meta);
+  }
+
+  /** Find-or-create the account behind a verified profile, then issue our tokens. */
+  private async completeSignIn(
+    provider: string,
+    profile: OAuthProfile,
+    meta: { ip?: string | null; userAgent?: string | null },
+  ): Promise<{ tokens: IssuedTokens; userId: ID; username: string; isNew: boolean }> {
     const existingLink = await this.db.identity.findOAuthAccount(provider, profile.providerUserId);
     let userId = existingLink?.userId ?? null;
     let isNew = false;

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>قفز الغابة — العب مجانًا | Voltade</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #052e16; overflow: hidden; font-family: system-ui, "Segoe UI", sans-serif; }
+  #wrap { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; box-sizing: border-box; }
+  #hud { display: flex; align-items: center; gap: 12px; color: #dcfce7; font-weight: 800; font-size: 14px; min-height: 22px; }
+  #hud button { background: #22c55e; border: 0; color: #fff; border-radius: 10px; padding: 6px 16px; font: inherit; font-weight: 800; cursor: pointer; }
+  canvas { background: #14532d; border-radius: 14px; touch-action: none; max-width: 100%; max-height: calc(100% - 44px); box-shadow: 0 12px 44px #0007; }
+  #msg { position: fixed; inset: 0; display: none; place-items: center; background: #000b; color: #fff; z-index: 5; }
+  #msg div { display: grid; gap: 14px; justify-items: center; font-size: 24px; font-weight: 900; text-align: center; padding: 20px; }
+  #msg button { background: #22c55e; border: 0; color: #fff; border-radius: 12px; padding: 10px 26px; font: inherit; font-weight: 800; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud"><span id="score"></span><span id="best"></span><button id="again" type="button">↺ إعادة</button></div>
+  <canvas id="c" width="760" height="420"></canvas>
+</div>
+<div id="msg"><div><span id="msgText"></span><button id="msgBtn" type="button">العب من جديد</button></div></div>
+<script>
+
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const $ = (id) => document.getElementById(id);
+let paused = false, score = 0;
+const BKEY = 'voltade-best-' + location.pathname;
+const readBest = () => Number(localStorage.getItem(BKEY) || 0);
+const showBest = (v) => { $('best').textContent = v ? ('أفضل نتيجة: ' + v) : ''; };
+function setScore(text) { $('score').textContent = text; }
+function gameOver(text, finalScore) {
+  paused = true;
+  if (typeof finalScore === 'number') showBest(Math.max(readBest(), finalScore));
+  $('msgText').textContent = text;
+  $('msg').style.display = 'grid';
+}
+$('again').onclick = () => location.reload();
+$('msgBtn').onclick = () => location.reload();
+showBest(readBest());
+const keys = {};
+addEventListener('keydown', (e) => {
+  keys[e.key] = true;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+});
+addEventListener('keyup', (e) => { keys[e.key] = false; });
+let pointer = null, pointerDown = false, tap = null;
+const toLogical = (e) => {
+  const r = cv.getBoundingClientRect();
+  return [ (e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height) ];
+};
+cv.addEventListener('pointerdown', (e) => { pointerDown = true; pointer = toLogical(e); tap = pointer; e.preventDefault(); });
+cv.addEventListener('pointermove', (e) => { pointer = toLogical(e); });
+addEventListener('pointerup', () => { pointerDown = false; });
+let swipe = null, touchOrigin = null;
+cv.addEventListener('touchstart', (e) => { touchOrigin = [e.touches[0].clientX, e.touches[0].clientY]; }, { passive: true });
+cv.addEventListener('touchend', (e) => {
+  if (!touchOrigin) return;
+  const dx = e.changedTouches[0].clientX - touchOrigin[0];
+  const dy = e.changedTouches[0].clientY - touchOrigin[1];
+  if (Math.abs(dx) > 24 || Math.abs(dy) > 24) swipe = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+  touchOrigin = null;
+}, { passive: true });
+const takeSwipe = () => { const s = swipe; swipe = null; return s; };
+const takeTap = () => { const t = tap; tap = null; return t; };
+const rnd = (n) => Math.floor(Math.random() * n);
+const FONT = (px, weight) => (weight || 700) + ' ' + px + 'px system-ui, "Segoe UI", sans-serif';
+
+
+let y = 0, v = 0, sliding = false, obs = [], frame = 0, speed = 5.4, dead = false;
+const GY = H - 60;
+function jump() { if (paused || y !== 0) return; v = 14.5; }
+cv.addEventListener('pointerdown', (e) => { const [, ly] = toLogical(e); if (ly > H * 0.6) { sliding = true; setTimeout(() => sliding = false, 420); } else jump(); });
+addEventListener('keydown', (e) => { if (e.key === ' ') jump(); if (e.key === 'ArrowDown') { sliding = true; setTimeout(() => sliding = false, 420); } });
+function step() {
+  frame++;
+  if (frame % 400 === 0) speed += 0.6;
+  v -= 0.75; y = Math.max(0, y + v); if (y === 0) v = 0;
+  if (frame % Math.max(28, 66 - Math.floor(speed * 4)) === 0) obs.push({ x: W + 40, fly: Math.random() < 0.3 });
+  obs.forEach(o => o.x -= speed);
+  obs = obs.filter(o => o.x > -60);
+  const py2 = GY - y, ph = sliding ? 26 : 52;
+  obs.forEach(o => { const oy = o.fly ? GY - 66 : GY - 34;
+    if (o.x < W * 0.24 + 20 && o.x + 34 > W * 0.24 - 12 && py2 > oy - ph + 16 && py2 - ph < oy + 34) { dead = true; gameOver('🚧 اصطدمت! المسافة: ' + score, score); } });
+  score = Math.floor(frame / 6); setScore('🏃 ' + score);
+}
+function draw() {
+  cx.fillStyle = '#14532d'; cx.fillRect(0, 0, W, H);
+  cx.fillStyle = '#22c55e'; cx.fillRect(0, GY, W, 4);
+  cx.font = FONT(40); cx.textAlign = 'center'; cx.textBaseline = 'bottom';
+  cx.fillText('🐒', W * 0.24, GY - y + 20);
+  cx.font = FONT(34);
+  obs.forEach(o => cx.fillText(o.fly ? '🦇' : '🪨', o.x, o.fly ? GY - 40 : GY + 2));
+}
+setInterval(() => { if (paused) return; step(); draw(); }, 16);
+setScore('🏃 0');
+
+</script>
+</body>
+</html>

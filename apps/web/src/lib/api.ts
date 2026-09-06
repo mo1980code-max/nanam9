@@ -219,6 +219,30 @@ async function getJson<T>(path: string, options: FetchOptions = {}): Promise<T |
 }
 
 /**
+ * The strict twin of getJson, for the one class of caller that must tell the two
+ * failures apart: routes that answer notFound().
+ *
+ * A 404 from the API means "this slug does not exist" → notFound() → a cached 404,
+ * correctly. A 5xx means "the database hiccuped" → throwing gives the visitor a
+ * retryable 500 and, crucially, poisons no cache entry. Conflating the two is how
+ * a one-second PGlite connection drop used to become a permanent 404 on a live
+ * game page.
+ */
+async function getJsonStrict<T>(path: string, options: FetchOptions = {}): Promise<T | null> {
+  const url = `${API_ORIGIN}/api${path.startsWith('/') ? path : `/${path}`}`;
+  const response = await fetch(url, {
+    headers: { accept: 'application/json' },
+    next: { revalidate: options.revalidate ?? 60, tags: options.tags },
+  }).catch((error: Error) => {
+    throw new Error(`api unreachable: ${path} (${error.message})`);
+  });
+  if (response.status >= 500) throw new Error(`api unavailable: ${path} → ${response.status}`);
+  if (!response.ok) return null;
+  const payload = (await response.json()) as Envelope<T>;
+  return payload.ok ? payload.data : null;
+}
+
+/**
  * The full envelope, including the top-level `meta.pagination` block the API puts
  * *beside* `data`, not inside it. List fetchers need it: without `total` and
  * `totalPages` every paginated page would believe it has exactly one page.
@@ -270,6 +294,13 @@ const qs = (params: Record<string, string | number | boolean | undefined | null>
 
 // ── settings & chrome ──────────────────────────────────────────────────────
 
+export type OAuthProviderInfo = { provider: string; enabled: boolean; dev?: boolean };
+
+export const getOAuthProviders = cache(async (): Promise<OAuthProviderInfo[]> => {
+  const data = await getJson<OAuthProviderInfo[]>('/auth/oauth/providers', { revalidate: 60 });
+  return data ?? [];
+});
+
 export const getSettings = cache(async (): Promise<Settings> => (await getJson<Settings>('/settings', { revalidate: 300 })) ?? {});
 
 export function settingValue<T = string>(settings: Settings, key: string, fallback: T): T {
@@ -289,8 +320,14 @@ export const getCategories = cache(async (): Promise<Category[]> => {
   return Array.isArray(data) ? data : data.items ?? [];
 });
 
+const getCategoriesStrict = cache(async (): Promise<Category[]> => {
+  const data = await getJsonStrict<Category[] | { items: Category[] }>('/categories', { revalidate: 300 });
+  if (!data) return [];
+  return Array.isArray(data) ? data : data.items ?? [];
+});
+
 export const getCategory = cache(async (slug: string): Promise<Category | null> => {
-  const all = await getCategories();
+  const all = await getCategoriesStrict();
   const search = (list: Category[]): Category | null => {
     for (const item of list) {
       if (item.slug === slug) return item;
@@ -310,7 +347,7 @@ export const getCategory = cache(async (slug: string): Promise<Category | null> 
  * and gives the exact path breadcrumbs and BreadcrumbList JSON-LD need.
  */
 export const getCategoryTrail = cache(async (slug: string): Promise<Category[]> => {
-  const all = await getCategories();
+  const all = await getCategoriesStrict();
   const path: Category[] = [];
   const walk = (list: Category[], trail: Category[]): boolean => {
     for (const item of list) {
@@ -362,7 +399,7 @@ export const listGames = cache(async (query: GameQuery = {}): Promise<ListResult
 });
 
 export const getGame = cache(async (slug: string): Promise<GamePage | null> =>
-  getJson<GamePage>(`/games/${encodeURIComponent(slug)}`, { revalidate: 60, tags: ['games', `game:${slug}`] }),
+  getJsonStrict<GamePage>(`/games/${encodeURIComponent(slug)}`, { revalidate: 60, tags: ['games', `game:${slug}`] }),
 );
 
 export const searchGames = cache(async (term: string, limit = 8): Promise<GameCard[]> => {
@@ -417,7 +454,7 @@ export const listPosts = cache(
 );
 
 export const getPost = cache(async (slug: string): Promise<PostView | null> =>
-  getJson<PostView>(`/blog/posts/${encodeURIComponent(slug)}`, { revalidate: 300, tags: ['posts', `post:${slug}`] }),
+  getJsonStrict<PostView>(`/blog/posts/${encodeURIComponent(slug)}`, { revalidate: 300, tags: ['posts', `post:${slug}`] }),
 );
 
 export const getBlogCategories = cache(async (): Promise<BlogCategory[]> => {
@@ -426,7 +463,7 @@ export const getBlogCategories = cache(async (): Promise<BlogCategory[]> => {
 });
 
 export const getPage = cache(async (slug: string): Promise<PageView | null> =>
-  getJson<PageView>(`/pages/${encodeURIComponent(slug)}`, { revalidate: 300, tags: ['pages'] }),
+  getJsonStrict<PageView>(`/pages/${encodeURIComponent(slug)}`, { revalidate: 300, tags: ['pages'] }),
 );
 
 export const getLivePages = cache(async (): Promise<{ slug: string; title: string; url: string }[]> => {

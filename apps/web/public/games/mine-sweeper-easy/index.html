@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>كانس الألغام المبتدئ — العب مجانًا | Voltade</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #052e16; overflow: hidden; font-family: system-ui, "Segoe UI", sans-serif; }
+  #wrap { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; box-sizing: border-box; }
+  #hud { display: flex; align-items: center; gap: 12px; color: #dcfce7; font-weight: 800; font-size: 14px; min-height: 22px; }
+  #hud button { background: #22c55e; border: 0; color: #fff; border-radius: 10px; padding: 6px 16px; font: inherit; font-weight: 800; cursor: pointer; }
+  canvas { background: #14532d; border-radius: 14px; touch-action: none; max-width: 100%; max-height: calc(100% - 44px); box-shadow: 0 12px 44px #0007; }
+  #msg { position: fixed; inset: 0; display: none; place-items: center; background: #000b; color: #fff; z-index: 5; }
+  #msg div { display: grid; gap: 14px; justify-items: center; font-size: 24px; font-weight: 900; text-align: center; padding: 20px; }
+  #msg button { background: #22c55e; border: 0; color: #fff; border-radius: 12px; padding: 10px 26px; font: inherit; font-weight: 800; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud"><span id="score"></span><span id="best"></span><button id="again" type="button">↺ إعادة</button></div>
+  <canvas id="c" width="560" height="560"></canvas>
+</div>
+<div id="msg"><div><span id="msgText"></span><button id="msgBtn" type="button">العب من جديد</button></div></div>
+<script>
+
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const $ = (id) => document.getElementById(id);
+let paused = false, score = 0;
+const BKEY = 'voltade-best-' + location.pathname;
+const readBest = () => Number(localStorage.getItem(BKEY) || 0);
+const showBest = (v) => { $('best').textContent = v ? ('أفضل نتيجة: ' + v) : ''; };
+function setScore(text) { $('score').textContent = text; }
+function gameOver(text, finalScore) {
+  paused = true;
+  if (typeof finalScore === 'number') showBest(Math.max(readBest(), finalScore));
+  $('msgText').textContent = text;
+  $('msg').style.display = 'grid';
+}
+$('again').onclick = () => location.reload();
+$('msgBtn').onclick = () => location.reload();
+showBest(readBest());
+const keys = {};
+addEventListener('keydown', (e) => {
+  keys[e.key] = true;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+});
+addEventListener('keyup', (e) => { keys[e.key] = false; });
+let pointer = null, pointerDown = false, tap = null;
+const toLogical = (e) => {
+  const r = cv.getBoundingClientRect();
+  return [ (e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height) ];
+};
+cv.addEventListener('pointerdown', (e) => { pointerDown = true; pointer = toLogical(e); tap = pointer; e.preventDefault(); });
+cv.addEventListener('pointermove', (e) => { pointer = toLogical(e); });
+addEventListener('pointerup', () => { pointerDown = false; });
+let swipe = null, touchOrigin = null;
+cv.addEventListener('touchstart', (e) => { touchOrigin = [e.touches[0].clientX, e.touches[0].clientY]; }, { passive: true });
+cv.addEventListener('touchend', (e) => {
+  if (!touchOrigin) return;
+  const dx = e.changedTouches[0].clientX - touchOrigin[0];
+  const dy = e.changedTouches[0].clientY - touchOrigin[1];
+  if (Math.abs(dx) > 24 || Math.abs(dy) > 24) swipe = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+  touchOrigin = null;
+}, { passive: true });
+const takeSwipe = () => { const s = swipe; swipe = null; return s; };
+const takeTap = () => { const t = tap; tap = null; return t; };
+const rnd = (n) => Math.floor(Math.random() * n);
+const FONT = (px, weight) => (weight || 700) + ' ' + px + 'px system-ui, "Segoe UI", sans-serif';
+
+
+const N = 9, MINES = 10;
+const CW = Math.floor(Math.min(W, H) / N), OX = (W - CW * N) / 2, OY = (H - CW * N) / 2;
+let cells = [], started = false, flags = 0, openCount = 0;
+for (let i = 0; i < N * N; i++) cells.push({ m: false, open: false, flag: false, n: 0 });
+function plant(safe) { let placed = 0; while (placed < MINES) { const i = rnd(N * N); if (cells[i].m || Math.abs(i - safe) <= N + 1) continue; cells[i].m = true; placed++; }
+  cells.forEach((c, i) => { let n = 0; around(i).forEach(j => { if (cells[j].m) n++; }); c.n = n; }); }
+function around(i) { const r = Math.floor(i / N), c = i % N, out = []; for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) { const rr = r + dr, cc = c + dc; if ((dr || dc) && rr >= 0 && rr < N && cc >= 0 && cc < N) out.push(rr * N + cc); } return out; }
+function open(i) { const c = cells[i]; if (c.open || c.flag) return; if (!started) { started = true; plant(i); }
+  c.open = true; openCount++;
+  if (c.m) { cells.forEach(x => x.open = true); draw(); gameOver('💥 بوم! انفجر اللغم', 0); return; }
+  if (!c.n) around(i).forEach(open);
+  if (openCount === N * N - MINES) gameOver('🧹 نظفت الحقل بالكامل!', 500);
+}
+cv.addEventListener('pointerdown', (e) => { if (paused) return; const [x, y2] = toLogical(e);
+  const c = Math.floor((x - OX) / CW), r = Math.floor((y2 - OY) / CW); if (c < 0 || c >= N || r < 0 || r >= N) return;
+  const i = r * N + c;
+  if (e.button === 2 || (e.pointerType === 'touch' && cells[i].open === false && flags < MINES && e.altKey)) { cells[i].flag = !cells[i].flag; flags += cells[i].flag ? 1 : -1; setScore('🚩 ' + flags + '/' + MINES); return; }
+  open(i); setScore('🚩 ' + flags + '/' + MINES);
+});
+cv.addEventListener('contextmenu', (e) => e.preventDefault());
+const NUM = ['#0000', '#22c55e', '#4caf50', '#f44336', '#9c27b0', '#ff9800', '#00bcd4', '#333', '#888'];
+function draw() {
+  cx.fillStyle = '#14532d'; cx.fillRect(0, 0, W, H);
+  cells.forEach((c, i) => { const x = OX + (i % N) * CW + 2, y2 = OY + Math.floor(i / N) * CW + 2, s = CW - 4;
+    cx.fillStyle = c.open ? (c.m ? '#e53935' : '#166534') : '#22c55e';
+    cx.beginPath(); cx.roundRect(x, y2, s, s, 6); cx.fill();
+    cx.textAlign = 'center'; cx.textBaseline = 'middle';
+    if (c.flag) { cx.font = FONT(s * 0.5); cx.fillText('🚩', x + s / 2, y2 + s / 2); }
+    else if (c.open && c.m) { cx.font = FONT(s * 0.5); cx.fillText('💣', x + s / 2, y2 + s / 2); }
+    else if (c.open && c.n) { cx.fillStyle = NUM[c.n]; cx.font = FONT(s * 0.55); cx.fillText(c.n, x + s / 2, y2 + s / 2); } });
+}
+setInterval(() => { if (!paused) draw(); }, 40);
+setScore('🚩 0/' + MINES);
+
+</script>
+</body>
+</html>

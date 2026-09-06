@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>فرقعة الفقاعات — العب مجانًا | Voltade</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #020617; overflow: hidden; font-family: system-ui, "Segoe UI", sans-serif; }
+  #wrap { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; box-sizing: border-box; }
+  #hud { display: flex; align-items: center; gap: 12px; color: #e2e8f0; font-weight: 800; font-size: 14px; min-height: 22px; }
+  #hud button { background: #38bdf8; border: 0; color: #fff; border-radius: 10px; padding: 6px 16px; font: inherit; font-weight: 800; cursor: pointer; }
+  canvas { background: #0f172a; border-radius: 14px; touch-action: none; max-width: 100%; max-height: calc(100% - 44px); box-shadow: 0 12px 44px #0007; }
+  #msg { position: fixed; inset: 0; display: none; place-items: center; background: #000b; color: #fff; z-index: 5; }
+  #msg div { display: grid; gap: 14px; justify-items: center; font-size: 24px; font-weight: 900; text-align: center; padding: 20px; }
+  #msg button { background: #38bdf8; border: 0; color: #fff; border-radius: 12px; padding: 10px 26px; font: inherit; font-weight: 800; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud"><span id="score"></span><span id="best"></span><button id="again" type="button">↺ إعادة</button></div>
+  <canvas id="c" width="560" height="640"></canvas>
+</div>
+<div id="msg"><div><span id="msgText"></span><button id="msgBtn" type="button">العب من جديد</button></div></div>
+<script>
+
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const $ = (id) => document.getElementById(id);
+let paused = false, score = 0;
+const BKEY = 'voltade-best-' + location.pathname;
+const readBest = () => Number(localStorage.getItem(BKEY) || 0);
+const showBest = (v) => { $('best').textContent = v ? ('أفضل نتيجة: ' + v) : ''; };
+function setScore(text) { $('score').textContent = text; }
+function gameOver(text, finalScore) {
+  paused = true;
+  if (typeof finalScore === 'number') showBest(Math.max(readBest(), finalScore));
+  $('msgText').textContent = text;
+  $('msg').style.display = 'grid';
+}
+$('again').onclick = () => location.reload();
+$('msgBtn').onclick = () => location.reload();
+showBest(readBest());
+const keys = {};
+addEventListener('keydown', (e) => {
+  keys[e.key] = true;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+});
+addEventListener('keyup', (e) => { keys[e.key] = false; });
+let pointer = null, pointerDown = false, tap = null;
+const toLogical = (e) => {
+  const r = cv.getBoundingClientRect();
+  return [ (e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height) ];
+};
+cv.addEventListener('pointerdown', (e) => { pointerDown = true; pointer = toLogical(e); tap = pointer; e.preventDefault(); });
+cv.addEventListener('pointermove', (e) => { pointer = toLogical(e); });
+addEventListener('pointerup', () => { pointerDown = false; });
+let swipe = null, touchOrigin = null;
+cv.addEventListener('touchstart', (e) => { touchOrigin = [e.touches[0].clientX, e.touches[0].clientY]; }, { passive: true });
+cv.addEventListener('touchend', (e) => {
+  if (!touchOrigin) return;
+  const dx = e.changedTouches[0].clientX - touchOrigin[0];
+  const dy = e.changedTouches[0].clientY - touchOrigin[1];
+  if (Math.abs(dx) > 24 || Math.abs(dy) > 24) swipe = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+  touchOrigin = null;
+}, { passive: true });
+const takeSwipe = () => { const s = swipe; swipe = null; return s; };
+const takeTap = () => { const t = tap; tap = null; return t; };
+const rnd = (n) => Math.floor(Math.random() * n);
+const FONT = (px, weight) => (weight || 700) + ' ' + px + 'px system-ui, "Segoe UI", sans-serif';
+
+
+let bubbles = [], frame = 0, missed = 0;
+function spawn() { bubbles.push({ x: 30 + rnd(W - 60), y: H + 30, r: 18 + rnd(40 - 18), v: 1.6 + Math.random() * 1.4, e: '🫧' }); }
+cv.addEventListener('pointerdown', (e) => { if (paused) return; const [x, y2] = toLogical(e);
+  for (let i = bubbles.length - 1; i >= 0; i--) { const b = bubbles[i]; if (Math.hypot(x - b.x, y2 - b.y) < b.r + 6) { bubbles.splice(i, 1); score += Math.max(5, Math.round(60 - b.r)); setScore('🫧 ' + score); return; } } });
+function step() {
+  frame++;
+  if (frame % 40 === 0) spawn();
+  bubbles.forEach(b => b.y -= b.v);
+  const gone = bubbles.filter(b => b.y < -40);
+  missed += gone.length;
+  bubbles = bubbles.filter(b => b.y >= -40);
+  if (missed >= 12) gameOver('🌊 أفلت منك ' + missed + ' — النقاط: ' + score, score);
+}
+function draw() {
+  cx.fillStyle = '#0f172a'; cx.fillRect(0, 0, W, H);
+  bubbles.forEach(b => { cx.fillStyle = '#38bdf844'; cx.beginPath(); cx.arc(b.x, b.y, b.r, 0, 7); cx.fill();
+    cx.font = FONT(b.r * 1.1); cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(b.e, b.x, b.y); });
+}
+setInterval(() => { if (paused) return; step(); draw(); }, 16);
+setScore('🫧 0');
+
+</script>
+</body>
+</html>

@@ -236,7 +236,7 @@ export class AuthController {
   ) {
     const returnTo = this.verifyState(req, provider, query.state);
     if (query.error || !query.code) {
-      return res.redirect(302, `/sign-in?error=${encodeURIComponent(query.error ?? 'oauth_failed')}`);
+      return res.redirect(302, `/login?error=${encodeURIComponent(query.error ?? 'oauth_failed')}`);
     }
 
     try {
@@ -246,7 +246,58 @@ export class AuthController {
     } catch (error) {
       const code = error instanceof AppError ? error.code : 'oauth.failed';
       this.loggerWarn(`${provider} callback failed: ${error instanceof Error ? error.message : String(error)}`);
-      return res.redirect(302, `/sign-in?error=${encodeURIComponent(code)}`);
+      return res.redirect(302, `/login?error=${encodeURIComponent(code)}`);
+    }
+  }
+
+  @Public()
+  @Get('oauth/dev/consent')
+  @ApiOperation({ summary: 'DEV ONLY: local account chooser standing in for Google consent' })
+  devConsent(@Query('provider') provider: string, @Query('state') state: string, @Res() res: Response) {
+    if (!this.oauth.devMode(provider) || !state) {
+      return res.status(404).type('text/plain; charset=utf-8').send('not available');
+    }
+    const accounts = [
+      { email: 'player.voltade@gmail.com', name: 'لاعب فولتيد' },
+      { email: 'sara.plays@gmail.com', name: 'سارة تلعب' },
+      { email: 'champ.ar@gmail.com', name: 'بطل العرب' },
+    ];
+    const action = `/auth/oauth/dev/approve?provider=${encodeURIComponent(provider)}&state=${encodeURIComponent(state)}`;
+    const rows = accounts
+      .map(
+        (a) =>
+          `<form method="get" action="${action}"><input type="hidden" name="email" value="${a.email}"><input type="hidden" name="name" value="${a.name}"><button type="submit"><span class="av">${a.name.charAt(0)}</span><span class="meta"><b>${a.name}</b><i dir="ltr">${a.email}</i></span></button></form>`,
+      )
+      .join('');
+    res.type('text/html; charset=utf-8').send(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>اختيار حساب Google — وضع تجريبي</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b12;font-family:system-ui,'Segoe UI',sans-serif;color:#e8e8f2}main{width:min(420px,92vw);background:#141422;border:1px solid #26263a;border-radius:18px;padding:26px}h1{font-size:18px;margin:0 0 4px}p{font-size:12px;color:#9a9ab0;margin:0 0 18px}form button{width:100%;display:flex;align-items:center;gap:12px;background:#1c1c2e;border:1px solid #2c2c44;border-radius:14px;padding:12px;margin-bottom:10px;color:inherit;font:inherit;cursor:pointer;text-align:start}.av{width:38px;height:38px;border-radius:50%;background:#7c3aed;display:grid;place-items:center;font-weight:800}.meta{display:grid}.meta i{font-style:normal;color:#9a9ab0;font-size:12px}input[type=text],input[type=email]{width:100%;box-sizing:border-box;background:#1c1c2e;border:1px solid #2c2c44;border-radius:10px;padding:10px;color:inherit;font:inherit;margin-bottom:8px}.go{width:100%;background:#7c3aed;border:0;border-radius:12px;padding:12px;color:#fff;font:inherit;font-weight:800;cursor:pointer}.tag{display:inline-block;background:#7c3aed22;color:#a78bfa;border-radius:99px;padding:3px 10px;font-size:11px;font-weight:700;margin-bottom:12px}</style></head><body><main><span class="tag">وضع تجريبي — لا يُعرض في الإنتاج</span><h1>اختيار حساب للمتابعة إلى Voltade</h1><p>هذه شاشة موافقة محلية تحل محل Google لأن مفاتيح OAuth غير مضبوطة في هذه البيئة.</p>${rows}<form method="get" action="${action}"><input type="text" name="name" placeholder="الاسم الظاهر (اختياري)"><input type="email" name="email" placeholder="بريدك@gmail.com" required><button class="go" type="submit">المتابعة بحساب آخر</button></form></main></body></html>`);
+  }
+
+  @Public()
+  @RateLimit('auth')
+  @Get('oauth/dev/approve')
+  @ApiOperation({ summary: 'DEV ONLY: completes the local consent as a real session' })
+  async devApprove(
+    @Query('provider') provider: string,
+    @Query('state') state: string,
+    @Query('email') email: string,
+    @Query('name') name: string,
+    @Req() req: Request,
+    @Res() res: Response,
+    @ClientIp() ip: string,
+  ) {
+    let returnTo = '/';
+    try {
+      returnTo = this.verifyState(req, provider, state);
+    } catch {
+      return res.redirect(302, `/login?error=${encodeURIComponent('oauth.state_mismatch')}`);
+    }
+    try {
+      const result = await this.oauth.devApprove(provider, { email: email ?? '', name: name ?? '' }, this.meta(req, ip));
+      this.setSessionCookies(res, result.tokens.accessToken, result.tokens.refreshToken, true);
+      return res.redirect(302, `${returnTo}?oauth=${result.isNew ? 'registered' : 'signed_in'}`);
+    } catch (error) {
+      const code = error instanceof AppError ? error.code : 'oauth.failed';
+      return res.redirect(302, `/login?error=${encodeURIComponent(code)}`);
     }
   }
 

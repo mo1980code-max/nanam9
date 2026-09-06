@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ذاكرة الأرقام — العب مجانًا | Voltade</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0b12; overflow: hidden; font-family: system-ui, "Segoe UI", sans-serif; }
+  #wrap { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; box-sizing: border-box; }
+  #hud { display: flex; align-items: center; gap: 12px; color: #e8e8f2; font-weight: 800; font-size: 14px; min-height: 22px; }
+  #hud button { background: #7c3aed; border: 0; color: #fff; border-radius: 10px; padding: 6px 16px; font: inherit; font-weight: 800; cursor: pointer; }
+  canvas { background: #141422; border-radius: 14px; touch-action: none; max-width: 100%; max-height: calc(100% - 44px); box-shadow: 0 12px 44px #0007; }
+  #msg { position: fixed; inset: 0; display: none; place-items: center; background: #000b; color: #fff; z-index: 5; }
+  #msg div { display: grid; gap: 14px; justify-items: center; font-size: 24px; font-weight: 900; text-align: center; padding: 20px; }
+  #msg button { background: #7c3aed; border: 0; color: #fff; border-radius: 12px; padding: 10px 26px; font: inherit; font-weight: 800; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud"><span id="score"></span><span id="best"></span><button id="again" type="button">↺ إعادة</button></div>
+  <canvas id="c" width="600" height="560"></canvas>
+</div>
+<div id="msg"><div><span id="msgText"></span><button id="msgBtn" type="button">العب من جديد</button></div></div>
+<script>
+
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const $ = (id) => document.getElementById(id);
+let paused = false, score = 0;
+const BKEY = 'voltade-best-' + location.pathname;
+const readBest = () => Number(localStorage.getItem(BKEY) || 0);
+const showBest = (v) => { $('best').textContent = v ? ('أفضل نتيجة: ' + v) : ''; };
+function setScore(text) { $('score').textContent = text; }
+function gameOver(text, finalScore) {
+  paused = true;
+  if (typeof finalScore === 'number') showBest(Math.max(readBest(), finalScore));
+  $('msgText').textContent = text;
+  $('msg').style.display = 'grid';
+}
+$('again').onclick = () => location.reload();
+$('msgBtn').onclick = () => location.reload();
+showBest(readBest());
+const keys = {};
+addEventListener('keydown', (e) => {
+  keys[e.key] = true;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+});
+addEventListener('keyup', (e) => { keys[e.key] = false; });
+let pointer = null, pointerDown = false, tap = null;
+const toLogical = (e) => {
+  const r = cv.getBoundingClientRect();
+  return [ (e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height) ];
+};
+cv.addEventListener('pointerdown', (e) => { pointerDown = true; pointer = toLogical(e); tap = pointer; e.preventDefault(); });
+cv.addEventListener('pointermove', (e) => { pointer = toLogical(e); });
+addEventListener('pointerup', () => { pointerDown = false; });
+let swipe = null, touchOrigin = null;
+cv.addEventListener('touchstart', (e) => { touchOrigin = [e.touches[0].clientX, e.touches[0].clientY]; }, { passive: true });
+cv.addEventListener('touchend', (e) => {
+  if (!touchOrigin) return;
+  const dx = e.changedTouches[0].clientX - touchOrigin[0];
+  const dy = e.changedTouches[0].clientY - touchOrigin[1];
+  if (Math.abs(dx) > 24 || Math.abs(dy) > 24) swipe = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+  touchOrigin = null;
+}, { passive: true });
+const takeSwipe = () => { const s = swipe; swipe = null; return s; };
+const takeTap = () => { const t = tap; tap = null; return t; };
+const rnd = (n) => Math.floor(Math.random() * n);
+const FONT = (px, weight) => (weight || 700) + ' ' + px + 'px system-ui, "Segoe UI", sans-serif';
+
+
+const EMOJI = ["➕","➖","✖️","➗","🟰","💯"];
+const COLS = 4, ROWS = EMOJI.length * 2 / COLS;
+let cards = [], open = [], lock = false, moves = 0, found = 0;
+EMOJI.concat(EMOJI).forEach(e => cards.push({ e, up: false, done: false }));
+for (let i = cards.length - 1; i > 0; i--) { const j = rnd(i + 1); [cards[i], cards[j]] = [cards[j], cards[i]]; }
+const CW = Math.min((W - 30) / COLS, (H - 30) / ROWS);
+const OX = (W - CW * COLS) / 2, OY = (H - CW * ROWS) / 2;
+cv.addEventListener('pointerdown', (e) => {
+  if (paused || lock) return;
+  const [x, y] = toLogical(e);
+  const c = Math.floor((x - OX) / CW), r = Math.floor((y - OY) / CW);
+  if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return;
+  const card = cards[r * COLS + c];
+  if (!card || card.up || card.done) return;
+  card.up = true; open.push(card);
+  if (open.length === 2) { moves++; setScore('🎴 محاولات: ' + moves); lock = true;
+    const [a, b] = open;
+    setTimeout(() => { if (a.e === b.e) { a.done = b.done = true; found++; if (found === EMOJI.length) gameOver('🎉 وجدتها كلها في ' + moves + ' محاولة!', Math.max(0, 500 - moves * 10)); } a.up = b.up = false; open = []; lock = false; }, 620);
+  }
+});
+function draw() {
+  cx.fillStyle = '#141422'; cx.fillRect(0, 0, W, H);
+  cards.forEach((card, i) => {
+    const c = i % COLS, r = Math.floor(i / COLS), x = OX + c * CW + 4, y = OY + r * CW + 4, s = CW - 8;
+    cx.fillStyle = card.done ? '#14532d' : card.up ? '#fff' : '#7c3aed';
+    cx.beginPath(); cx.roundRect(x, y, s, s, 10); cx.fill();
+    cx.font = FONT(s * 0.55); cx.textAlign = 'center'; cx.textBaseline = 'middle';
+    if (card.up || card.done) cx.fillText(card.e, x + s / 2, y + s / 2);
+    else { cx.fillStyle = '#ffffff55'; cx.fillText('؟', x + s / 2, y + s / 2); }
+  });
+}
+setInterval(() => { if (!paused) draw(); }, 30);
+setScore('🎴 محاولات: 0');
+
+</script>
+</body>
+</html>

@@ -11,19 +11,36 @@
  */
 
 import type { MetadataRoute } from 'next';
-import { getCategories, listGames, listPosts, siteUrl } from '@/lib/api';
+import { getCategories, listGames, listPosts, siteUrl, type GameCard } from '@/lib/api';
 
-export const revalidate = 600; // 10 minutes
+export const revalidate = 60; // one minute: cheap from cache, fresh enough for publishing
 
 const SITEMAP_GAME_LIMIT = 2000; // one sitemap file stays under the 50k-URL protocol limit with headroom
+const PAGE_SIZE = 60; // the API's hard perPage cap (PAGINATION.maxPerPage in @voltade/shared)
+
+/**
+ * Walks the catalogue page by page. Asking for 2000 rows in one call would hit the
+ * API's perPage validation and — worse — fail *silently* into an empty sitemap,
+ * which is exactly the kind of bug that costs a portal its index coverage.
+ */
+async function allGames(limit: number): Promise<GameCard[]> {
+  const out: GameCard[] = [];
+  for (let page = 1; out.length < limit && page <= 40; page += 1) {
+    const result = await listGames({ page, perPage: PAGE_SIZE, sort: 'updated' });
+    if (!result.items.length) break;
+    out.push(...result.items);
+    if (out.length >= result.total) break;
+  }
+  return out.slice(0, limit);
+}
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
 
   const [categories, posts, games] = await Promise.all([
     getCategories(),
-    listPosts({ perPage: 100, sort: 'newest' }),
-    listGames({ perPage: SITEMAP_GAME_LIMIT, sort: 'updated' }),
+    listPosts({ perPage: 50, sort: 'newest' }),
+    allGames(SITEMAP_GAME_LIMIT),
   ]);
 
   const staticEntries: MetadataRoute.Sitemap = [
@@ -41,7 +58,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.8,
     }));
 
-  const gameEntries: MetadataRoute.Sitemap = games.items.map((game) => ({
+  const gameEntries: MetadataRoute.Sitemap = games.map((game) => ({
     url: siteUrl(`/game/${game.slug}`),
     lastModified: game.publishedAt ? new Date(game.publishedAt) : now,
     changeFrequency: 'weekly',

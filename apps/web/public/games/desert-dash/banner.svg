@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#451a03"/><stop offset="1" stop-color="#78350f"/></linearGradient></defs>
+  <rect width="1200" height="630" fill="url(#g)"/>
+  <circle cx="1020" cy="120" r="220" fill="#f59e0b" opacity="0.2"/>
+  <circle cx="150" cy="540" r="170" fill="#ef4444" opacity="0.14"/>
+  <text x="600" y="330" font-size="190" text-anchor="middle">🏃</text>
+  <text x="600" y="490" font-size="64" font-weight="700" text-anchor="middle" fill="#fef3c7" font-family="system-ui, sans-serif">عدو الصحراء</text>
+  <text x="600" y="560" font-size="30" text-anchor="middle" fill="#fef3c7" opacity="0.7" font-family="system-ui, sans-serif">Desert Dash — Voltade</text>
+</svg>

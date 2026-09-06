@@ -19,12 +19,6 @@ export const revalidate = 60;
 
 type Params = { slug: string };
 
-export async function generateStaticParams() {
-  // Pre-render the newest articles; older ones come from ISR on first request.
-  const { items } = await listPosts({ perPage: 30, sort: 'newest' });
-  return items.map((post) => ({ slug: post.slug }));
-}
-
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const { slug } = await params;
   const post = await getPost(slug);

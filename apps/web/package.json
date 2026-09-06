@@ -5,7 +5,7 @@
   "description": "Voltade web — Next.js 15 App Router, React Server Components, SSR/ISR for game + category pages, Tailwind CSS 4, bilingual RTL-first (ar/en), PWA.",
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p ${PORT:-3000}",
-    "build": "next build",
+    "build": "NEXT_STATIC_GENERATION_CONCURRENCY=4 next build",
     "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

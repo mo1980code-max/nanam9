@@ -27,22 +27,14 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Breadcrumbs } from '@/components/breadcrumbs';
-import { Comments } from '@/components/comments';
 import { GameActions } from '@/components/game-actions';
 import { GameCard, Stars } from '@/components/game-card';
 import { GamePlayer } from '@/components/game-player';
-import { breadcrumbJsonLd, gameJsonLd, getGame, getSettings, listGames, mediaUrl, settingValue, siteOrigin, siteUrl } from '@/lib/api';
+import { breadcrumbJsonLd, gameJsonLd, getGame, listGames, mediaUrl, siteOrigin, siteUrl } from '@/lib/api';
 
 export const revalidate = 60;
 
 type Params = { slug: string };
-
-export async function generateStaticParams() {
-  // The 48 most-played games. Cheap at build time, covers the overwhelming majority of
-  // traffic, and every other slug is generated on first request and then cached.
-  const { items } = await listGames({ perPage: 48, sort: 'popular' });
-  return items.map((game) => ({ slug: game.slug }));
-}
 
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const { slug } = await params;
@@ -89,7 +81,7 @@ const ORIENTATION_LABELS: Record<string, string> = {
 
 export default async function GamePage({ params }: { params: Promise<Params> }) {
   const { slug } = await params;
-  const [result, settings] = await Promise.all([getGame(slug), getSettings()]);
+  const result = await getGame(slug);
   if (!result) notFound();
 
   const { game, related = [], trail = [], viewer } = result;
@@ -99,7 +91,6 @@ export default async function GamePage({ params }: { params: Promise<Params> }) 
   const tags = game.tags ?? [];
   const size = fileSize(game.sizeKb);
   const playerSrc = mediaUrl(game.url);
-  const guestComments = String(settingValue(settings, 'games.guestComments', true)) === 'true';
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-4 sm:py-6">
@@ -204,14 +195,6 @@ export default async function GamePage({ params }: { params: Promise<Params> }) 
             </section>
           ) : null}
 
-          {/* ------------------------------------------------------------------ comments */}
-          <Comments
-            gameSlug={game.slug}
-            initial={[]}
-            total={game.commentsCount}
-            guestComments={guestComments}
-            signedIn={viewer?.authenticated ?? false}
-          />
         </main>
 
         {/* --------------------------------------------------------------------- sidebar */}

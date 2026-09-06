@@ -51,6 +51,13 @@ type DemoGame = {
   rating: number;
 };
 
+/**
+ * The generated library (tools/gamelib/generate.mjs): forty-one self-contained
+ * HTML5 builds across fifteen engines. Kept in a generated file so the seed and
+ * the public/ assets can never disagree about what exists.
+ */
+import { LIBRARY_GAMES } from './library.games.js';
+
 const DEMO_GAMES: DemoGame[] = [
   {
     slug: 'neon-pong',
@@ -535,7 +542,8 @@ export async function seedDatabase(db: Database, options: SeedOptions = {}): Pro
   // 6. Games.
   const gameIds = new Map<string, ID>();
   if (demo) {
-    for (const g of DEMO_GAMES) {
+    const ALL_GAMES: DemoGame[] = [...DEMO_GAMES, ...(LIBRARY_GAMES as unknown as readonly DemoGame[])];
+    for (const g of ALL_GAMES) {
       const existing = await db.catalog.findGameBySlug(g.slug);
       if (existing) {
         gameIds.set(g.slug, existing.id);

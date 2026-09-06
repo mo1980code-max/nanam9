@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360" viewBox="0 0 480 360">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#0b0b12"/><stop offset="1" stop-color="#141422"/></linearGradient></defs>
+  <rect width="480" height="360" rx="28" fill="url(#g)"/>
+  <circle cx="392" cy="72" r="120" fill="#7c3aed" opacity="0.22"/>
+  <circle cx="64" cy="308" r="90" fill="#06b6d4" opacity="0.16"/>
+  <text x="240" y="176" font-size="112" text-anchor="middle">⚡</text>
+  <text x="240" y="286" font-size="34" font-weight="700" text-anchor="middle" fill="#e8e8f2" font-family="system-ui, sans-serif">الثعبان توربو</text>
+</svg>

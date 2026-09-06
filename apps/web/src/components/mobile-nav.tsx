@@ -104,7 +104,7 @@ export function MobileNav({ categories, registrationEnabled }: Props) {
             <div className="mt-auto grid gap-2 pt-6">
               <Link href="/login" className="btn btn-primary">دخول</Link>
               {registrationEnabled && (
-                <Link href="/register" className="btn btn-ghost">إنشاء حساب</Link>
+                <Link href="/login" className="btn btn-ghost">الدخول بحساب جوجل</Link>
               )}
             </div>
           </nav>

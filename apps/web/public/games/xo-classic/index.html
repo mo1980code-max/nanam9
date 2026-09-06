@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>إكس أو الكلاسيكية — العب مجانًا | Voltade</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #fff1f2; overflow: hidden; font-family: system-ui, "Segoe UI", sans-serif; }
+  #wrap { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; box-sizing: border-box; }
+  #hud { display: flex; align-items: center; gap: 12px; color: #881337; font-weight: 800; font-size: 14px; min-height: 22px; }
+  #hud button { background: #f43f5e; border: 0; color: #fff; border-radius: 10px; padding: 6px 16px; font: inherit; font-weight: 800; cursor: pointer; }
+  canvas { background: #ffe4e6; border-radius: 14px; touch-action: none; max-width: 100%; max-height: calc(100% - 44px); box-shadow: 0 12px 44px #0007; }
+  #msg { position: fixed; inset: 0; display: none; place-items: center; background: #000b; color: #fff; z-index: 5; }
+  #msg div { display: grid; gap: 14px; justify-items: center; font-size: 24px; font-weight: 900; text-align: center; padding: 20px; }
+  #msg button { background: #f43f5e; border: 0; color: #fff; border-radius: 12px; padding: 10px 26px; font: inherit; font-weight: 800; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud"><span id="score"></span><span id="best"></span><button id="again" type="button">↺ إعادة</button></div>
+  <canvas id="c" width="520" height="520"></canvas>
+</div>
+<div id="msg"><div><span id="msgText"></span><button id="msgBtn" type="button">العب من جديد</button></div></div>
+<script>
+
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const $ = (id) => document.getElementById(id);
+let paused = false, score = 0;
+const BKEY = 'voltade-best-' + location.pathname;
+const readBest = () => Number(localStorage.getItem(BKEY) || 0);
+const showBest = (v) => { $('best').textContent = v ? ('أفضل نتيجة: ' + v) : ''; };
+function setScore(text) { $('score').textContent = text; }
+function gameOver(text, finalScore) {
+  paused = true;
+  if (typeof finalScore === 'number') showBest(Math.max(readBest(), finalScore));
+  $('msgText').textContent = text;
+  $('msg').style.display = 'grid';
+}
+$('again').onclick = () => location.reload();
+$('msgBtn').onclick = () => location.reload();
+showBest(readBest());
+const keys = {};
+addEventListener('keydown', (e) => {
+  keys[e.key] = true;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+});
+addEventListener('keyup', (e) => { keys[e.key] = false; });
+let pointer = null, pointerDown = false, tap = null;
+const toLogical = (e) => {
+  const r = cv.getBoundingClientRect();
+  return [ (e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height) ];
+};
+cv.addEventListener('pointerdown', (e) => { pointerDown = true; pointer = toLogical(e); tap = pointer; e.preventDefault(); });
+cv.addEventListener('pointermove', (e) => { pointer = toLogical(e); });
+addEventListener('pointerup', () => { pointerDown = false; });
+let swipe = null, touchOrigin = null;
+cv.addEventListener('touchstart', (e) => { touchOrigin = [e.touches[0].clientX, e.touches[0].clientY]; }, { passive: true });
+cv.addEventListener('touchend', (e) => {
+  if (!touchOrigin) return;
+  const dx = e.changedTouches[0].clientX - touchOrigin[0];
+  const dy = e.changedTouches[0].clientY - touchOrigin[1];
+  if (Math.abs(dx) > 24 || Math.abs(dy) > 24) swipe = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+  touchOrigin = null;
+}, { passive: true });
+const takeSwipe = () => { const s = swipe; swipe = null; return s; };
+const takeTap = () => { const t = tap; tap = null; return t; };
+const rnd = (n) => Math.floor(Math.random() * n);
+const FONT = (px, weight) => (weight || 700) + ' ' + px + 'px system-ui, "Segoe UI", sans-serif';
+
+
+let b = Array(9).fill(''), turn = 'X', done = false;
+const LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+const CW = Math.min(W, H) / 3.4, OX = (W - CW * 3) / 2, OY = (H - CW * 3) / 2;
+function winner(board) { for (const [a, c, d] of LINES) if (board[a] && board[a] === board[c] && board[a] === board[d]) return board[a]; return board.every(Boolean) ? 'D' : null; }
+function bestMove(board, me) {
+  const w = winner(board); if (w === me) return 10; if (w && w !== 'D') return -10; if (w === 'D') return 0;
+  const scores = [];
+  for (let i = 0; i < 9; i++) if (!board[i]) { board[i] = me; scores.push([i, bestMove(board, me === 'O' ? 'X' : 'O') * (me === 'O' ? 1 : -1)]); board[i] = ''; }
+  scores.sort((a, c) => me === 'O' ? c[1] - a[1] : a[1] - c[1]);
+  return Array.isArray(scores[0]) ? scores[0][0] : scores[0];
+}
+cv.addEventListener('pointerdown', (e) => {
+  if (paused || done || turn !== 'X') return;
+  const [x, y2] = toLogical(e);
+  const c = Math.floor((x - OX) / CW), r = Math.floor((y2 - OY) / CW);
+  if (c < 0 || c > 2 || r < 0 || r > 2 || b[r * 3 + c]) return;
+  b[r * 3 + c] = 'X'; finishOrSwap();
+});
+function finishOrSwap() {
+  const w = winner(b);
+  if (w === 'X') { done = true; draw(); gameOver('🎉 فزت على الذكاء!', 300); return; }
+  if (w === 'D') { done = true; draw(); gameOver('🤝 تعادل!', 100); return; }
+  turn = 'O';
+  setTimeout(() => { if (paused || done) return; const m = bestMove([...b], 'O'); if (typeof m === 'number') b[m] = 'O';
+    const w2 = winner(b); turn = 'X';
+    if (w2 === 'O') { done = true; draw(); gameOver('🤖 فاز الحاسوب هذه المرة', 0); return; }
+    if (w2 === 'D') { done = true; draw(); gameOver('🤝 تعادل!', 100); return; }
+    draw(); }, 260);
+}
+function draw() {
+  cx.fillStyle = '#ffe4e6'; cx.fillRect(0, 0, W, H);
+  cx.strokeStyle = '#f43f5e'; cx.lineWidth = 4;
+  for (let i = 1; i < 3; i++) { cx.beginPath(); cx.moveTo(OX + i * CW, OY); cx.lineTo(OX + i * CW, OY + 3 * CW); cx.stroke(); cx.beginPath(); cx.moveTo(OX, OY + i * CW); cx.lineTo(OX + 3 * CW, OY + i * CW); cx.stroke(); }
+  b.forEach((v, i) => { if (!v) return; const x = OX + (i % 3) * CW + CW / 2, y2 = OY + Math.floor(i / 3) * CW + CW / 2;
+    cx.font = FONT(CW * 0.55); cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillStyle = v === 'X' ? '#f43f5e' : '#0ea5e9'; cx.fillText(v === 'X' ? '❌' : '⭕', x, y2); });
+}
+setInterval(() => { if (!paused) draw(); }, 40);
+setScore('❌ أنت — 🤖 الحاسوب');
+
+</script>
+</body>
+</html>
