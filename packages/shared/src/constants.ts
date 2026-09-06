@@ -205,6 +205,13 @@ export const CACHE = {
     stats: 120,
     ads: 300,
     theme: 600,
+    /** Blog listings change when an editor publishes, which is a few times a day. */
+    posts: 60,
+    /** A post body is immutable once published; the counter beside it is not. */
+    post: 300,
+    /** Static pages are the closest thing to a deploy-time artefact there is. */
+    page: 600,
+    blogCategories: 600,
   },
   key: {
     settings: (scope: 'public' | 'all') => `settings:${scope}`,
@@ -217,6 +224,19 @@ export const CACHE = {
     ads: (placement: string) => `ads:${placement}`,
     /** The active theme is read on every page shell render, so it is cached longest. */
     theme: (scope: 'active' | 'all') => `theme:${scope}`,
+    /**
+     * Blog listings are cached under a version namespace: a write bumps the version
+     * instead of scanning for every `posts:*` key. One O(1) command beats an
+     * O(keyspace) SCAN, and the abandoned keys expire on their own within a minute.
+     */
+    postsVersion: () => 'posts:version',
+    posts: (version: string, hash: string) => `posts:${version}:${hash}`,
+    post: (slug: string) => `post:${slug}`,
+    page: (slug: string) => `page:${slug}`,
+    pages: (scope: 'live' | 'all') => `pages:${scope}`,
+    blogCategories: () => 'blog:categories',
+    /** One view per visitor per hour: a refresh button is not an audience. */
+    postView: (postId: string, visitor: string) => `post:view:${postId}:${visitor}`,
     rateLimit: (bucket: string) => `rl:${bucket}`,
     loginAttempts: (key: string) => `login:${key}`,
     otp: (key: string) => `otp:${key}`,

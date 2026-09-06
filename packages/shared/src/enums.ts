@@ -277,6 +277,32 @@ export const SectionKind = {
 } as const;
 export type SectionKind = (typeof SectionKind)[keyof typeof SectionKind];
 
+/**
+ * Every block the page builder may store, and therefore every block the web app
+ * knows how to render.
+ *
+ * One list, in shared, because the two sides must agree exactly: a block type the
+ * API accepts but the renderer does not know is a blank hole in a published page,
+ * and a type the renderer supports but the API rejects cannot be saved at all.
+ * It is SectionKind (the homepage builder's vocabulary) plus the blocks that only
+ * make sense inside a page body.
+ */
+export const PageBlockType = {
+  ...SectionKind,
+  /** Markdown prose — the block a legal page or an "about us" is mostly made of. */
+  richText: 'rich_text',
+  /** A row of label/value counters (`props.stats`). */
+  statRow: 'stat_row',
+  text: 'text',
+  image: 'image',
+  cta: 'cta',
+  spacer: 'spacer',
+  /** `props.items: { q, a }[]` — also emitted as FAQPage structured data. */
+  faq: 'faq',
+} as const;
+export type PageBlockType = (typeof PageBlockType)[keyof typeof PageBlockType];
+export const PAGE_BLOCK_TYPES = Object.values(PageBlockType);
+
 export const BackupKind = { database: 'database', files: 'files', full: 'full' } as const;
 export type BackupKind = (typeof BackupKind)[keyof typeof BackupKind];
 

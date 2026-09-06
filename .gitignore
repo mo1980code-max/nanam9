@@ -1,5 +1,5 @@
 # runtime state & secrets — never ship or commit these
-var/
+/var/
 config/config.php
 *.sqlite
 *.sqlite-wal
@@ -29,7 +29,9 @@ apps/web/public/workbox-*.js
 .var/
 .var-pglite/
 packages/db/.data/
-storage/
-uploads/
+# Anchored to the repo root on purpose: an unanchored `storage/` also matched
+# apps/api/src/common/storage/ and silently kept real source code out of git.
+/storage/
+/uploads/
 *.log
 npm-debug.log*

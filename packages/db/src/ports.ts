@@ -817,7 +817,20 @@ export interface EngagementRepository {
 
 export interface ContentRepository {
   findPageBySlug(slug: string): Promise<PageRow | null>;
-  listPages(filter?: { status?: string; page?: Page }): Promise<List<PageRow>>;
+  /**
+   * `status: 'live'` means "visible to a visitor right now": published, or scheduled
+   * with a published_at that has passed. Scheduling is therefore data rather than a
+   * background job — nothing has to wake up and flip a row for a post to go out.
+   */
+  /**
+   * `status: 'any'` skips the status filter (the admin list); omitted means 'published'.
+   * `includeDeleted` lifts the soft-delete filter — without it an archived row is
+   * invisible to everyone, which makes a soft delete a hard delete with extra steps
+   * and no way back.
+   */
+  listPages(filter?: { status?: string; includeDeleted?: boolean; page?: Page }): Promise<List<PageRow>>;
+  findPageById(id: ID, options?: { includeDeleted?: boolean }): Promise<PageRow | null>;
+  restorePage(id: ID): Promise<PageRow | null>;
   createPage(data: Partial<PageRow> & { slug: string; title: string }): Promise<PageRow>;
   updatePage(id: ID, patch: Partial<PageRow>): Promise<PageRow | null>;
   deletePage(id: ID, options?: { hard?: boolean }): Promise<boolean>;
@@ -827,10 +840,31 @@ export interface ContentRepository {
   updateBlogCategory(id: ID, patch: Partial<BlogCategoryRow>): Promise<BlogCategoryRow | null>;
   deleteBlogCategory(id: ID): Promise<boolean>;
 
-  listPosts(filter?: { status?: string; categorySlug?: string; tagSlug?: string; q?: string; page?: Page }): Promise<List<BlogPostRow>>;
+  listPosts(filter?: {
+    /**
+     * A concrete status, 'live' (published + scheduled whose time has come), or 'any'
+     * (no status filter at all — the admin list). Omitted means 'published'.
+     */
+    status?: string;
+    categorySlug?: string;
+    tagSlug?: string;
+    q?: string;
+    /** 'popular' orders by views; the default is newest first. */
+    sort?: 'newest' | 'popular';
+    /** Author username or id — the admin list's "posts by this editor" filter. */
+    author?: string;
+    /** Lift the soft-delete filter so archives stay visible and restorable. */
+    includeDeleted?: boolean;
+    page?: Page;
+  }): Promise<List<BlogPostRow>>;
   findPostBySlug(slug: string): Promise<BlogPostRow | null>;
+  /** By primary key, with the same author/category/tags joins the slug lookup returns. */
+  findPostById(id: ID, options?: { includeDeleted?: boolean }): Promise<BlogPostRow | null>;
+  /** Clears deleted_at. Status is left alone: restoring is not publishing. */
+  restorePost(id: ID): Promise<BlogPostRow | null>;
   createPost(data: Partial<BlogPostRow> & { slug: string; title: string; body: string; authorId: ID }): Promise<BlogPostRow>;
   updatePost(id: ID, patch: Partial<BlogPostRow>): Promise<BlogPostRow | null>;
+  /** Soft by default (deleted_at + status=archived); `hard` removes the row. */
   deletePost(id: ID, options?: { hard?: boolean }): Promise<boolean>;
   incrementPostViews(id: ID): Promise<void>;
   setPostTags(postId: ID, tags: (string | { slug: string; name: string })[]): Promise<TagRow[]>;

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { withDatabase, introspect, type TestDatabase } from './helpers/database.js';
 import { parsePrismaSchema } from '../src/tools/prisma-schema.js';
@@ -33,6 +33,17 @@ const DB_MANAGED_EXTRAS: Record<string, string[]> = {
 
 /** Prisma's bookkeeping table — created by the migrator, not by the schema. */
 const DB_MANAGED_TABLES = ['_prisma_migrations'];
+
+/**
+ * Every migration on disk, in apply order.
+ *
+ * Derived rather than written out: a hardcoded list of migration names goes stale the
+ * first time someone adds a migration, and a suite that is permanently red teaches
+ * everyone to stop reading it — which is how a real regression slips through later.
+ */
+const MIGRATIONS = readdirSync(migrationsDir())
+  .filter((entry) => /^\d{14}_/.test(entry))
+  .sort();
 
 let ctx: TestDatabase;
 const schema = parsePrismaSchema(readFileSync(schemaPath(), 'utf8'));
@@ -343,17 +354,18 @@ describe('migration files', () => {
     const rows = await ctx.conn.many<{ name: string; checksum: string; steps: number }>(
       `SELECT migration_name AS name, checksum, applied_steps_count AS steps FROM _prisma_migrations ORDER BY started_at`,
     );
-    expect(rows.map((r) => r.name)).toEqual(['20260905120000_init', '20260905120200_search_and_constraints']);
+    expect(rows.map((r) => r.name)).toEqual(MIGRATIONS);
     for (const r of rows) {
       expect(r.checksum).toMatch(/^[a-f0-9]{64}$/);
       expect(r.steps).toBe(1);
     }
   });
 
-  it('are both present on disk with a provider lock', () => {
+  it('are all present on disk with a provider lock', () => {
     const lock = readFileSync(join(migrationsDir(), 'migration_lock.toml'), 'utf8');
     expect(lock).toContain('postgresql');
-    for (const dir of ['20260905120000_init', '20260905120200_search_and_constraints']) {
+    expect(MIGRATIONS.length).toBeGreaterThanOrEqual(2);
+    for (const dir of MIGRATIONS) {
       expect(readFileSync(join(migrationsDir(), dir, 'migration.sql'), 'utf8').length).toBeGreaterThan(100);
     }
   });

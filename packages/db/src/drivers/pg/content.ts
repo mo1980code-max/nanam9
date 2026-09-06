@@ -72,9 +72,26 @@ export class PgContentRepository extends PgRepo implements ContentRepository {
     return this.conn.one<PageRow>(`SELECT * FROM pages WHERE slug = $1 AND deleted_at IS NULL`, [slug]);
   }
 
-  async listPages(filter: { status?: string; page?: { page: number; perPage: number; offset: number } } = {}): Promise<List<PageRow>> {
-    const conds: SqlPart[] = [sql`deleted_at IS NULL`];
-    if (filter.status) conds.push(eq('status', filter.status)!);
+  async findPageById(id: ID, options: { includeDeleted?: boolean } = {}): Promise<PageRow | null> {
+    const alive = options.includeDeleted ? '' : ' AND deleted_at IS NULL';
+    return this.conn.one<PageRow>(`SELECT * FROM pages WHERE id = $1${alive}`, [id]);
+  }
+
+  async restorePage(id: ID): Promise<PageRow | null> {
+    await this.conn.run(`UPDATE pages SET deleted_at = NULL, updated_at = now() WHERE id = $1`, [id]);
+    return this.findPageById(id, { includeDeleted: true });
+  }
+
+  async listPages(filter: {
+    status?: string;
+    includeDeleted?: boolean;
+    page?: { page: number; perPage: number; offset: number };
+  } = {}): Promise<List<PageRow>> {
+    const conds: SqlPart[] = filter.includeDeleted ? [] : [sql`deleted_at IS NULL`];
+    // Pages are not scheduled, so for a page 'live' simply means 'published'; 'any'
+    // drops the status filter altogether for the admin list.
+    if (filter.status === 'any') { /* no status condition */ } else if (filter.status === 'live') conds.push(eq('status', 'published')!);
+    else if (filter.status) conds.push(eq('status', filter.status)!);
     const where = resolvePart(sql.and(...conds));
     const p = pageOf(filter.page, 25);
     const total = (await this.conn.value<number>(`SELECT count(*)::int FROM pages WHERE ${where.text}`, where.values)) ?? 0;
@@ -111,7 +128,19 @@ export class PgContentRepository extends PgRepo implements ContentRepository {
   // ─────────────────────────── blog categories ───────────────────────────
 
   async listBlogCategories(): Promise<BlogCategoryRow[]> {
-    return this.conn.many<BlogCategoryRow>(`SELECT * FROM blog_categories ORDER BY sort_order, name`);
+    // posts_count is computed here rather than read from the stored column: a scheduled
+    // post becomes live when the clock passes its published_at, and no write happens at
+    // that moment to refresh a denormalised counter. Blog categories number in the tens,
+    // so a correlated subquery costs nothing and cannot be wrong.
+    return this.conn.many<BlogCategoryRow>(`
+      SELECT bc.id, bc.slug, bc.name, bc.description, bc.parent_id, bc.sort_order, bc.created_at, bc.updated_at,
+             (SELECT count(*)::int FROM blog_posts p
+               WHERE p.category_id = bc.id AND p.deleted_at IS NULL
+                 AND (p.status = 'published'
+                      OR (p.status = 'scheduled' AND p.published_at IS NOT NULL AND p.published_at <= now()))
+             ) AS posts_count
+        FROM blog_categories bc
+       ORDER BY bc.sort_order, bc.name`);
   }
 
   async createBlogCategory(data: Partial<BlogCategoryRow> & { slug: string; name: string }): Promise<BlogCategoryRow> {
@@ -146,14 +175,32 @@ export class PgContentRepository extends PgRepo implements ContentRepository {
     categorySlug?: string;
     tagSlug?: string;
     q?: string;
+    sort?: 'newest' | 'popular';
+    author?: string;
+    includeDeleted?: boolean;
     page?: { page: number; perPage: number; offset: number };
   } = {}): Promise<List<BlogPostRow>> {
-    const conds: SqlPart[] = [sql`p.deleted_at IS NULL`, sql`p.status = ${filter.status ?? 'published'}`];
+    const conds: SqlPart[] = filter.includeDeleted ? [] : [sql`p.deleted_at IS NULL`];
+    if (filter.status === 'any') {
+      // The admin list sees every status; a default here would silently hide drafts.
+    } else if (filter.status === 'live') {
+      // "Live" is evaluated by the query, not by a cron job: a scheduled post appears
+      // the instant its published_at passes, and there is no worker that can be down,
+      // late or silently skipped. The trade is one extra OR in the WHERE clause, which
+      // the (status, published_at DESC) index still covers.
+      conds.push(sql`(p.status = 'published' OR (p.status = 'scheduled' AND p.published_at IS NOT NULL AND p.published_at <= now()))`);
+    } else {
+      conds.push(sql`p.status = ${filter.status ?? 'published'}`);
+    }
     if (filter.categorySlug) conds.push(eq('bc.slug', filter.categorySlug)!);
     if (filter.tagSlug) {
       conds.push(
         sql`EXISTS (SELECT 1 FROM blog_post_tag bt JOIN tags t ON t.id = bt.tag_id WHERE bt.post_id = p.id AND t.slug = ${filter.tagSlug})`,
       );
+    }
+    if (filter.author?.trim()) {
+      const author = filter.author.trim();
+      conds.push(sql`(u.username = ${author} OR p.author_id = ${author})`);
     }
     if (filter.q?.trim()) {
       const q = filter.q.trim();
@@ -166,7 +213,9 @@ export class PgContentRepository extends PgRepo implements ContentRepository {
     const from = `blog_posts p JOIN users u ON u.id = p.author_id LEFT JOIN blog_categories bc ON bc.id = p.category_id`;
     const total = (await this.conn.value<number>(`SELECT count(*)::int FROM ${from} WHERE ${where.text}`, where.values)) ?? 0;
     const items = await this.conn.many<BlogPostRow>(
-      `${POST_SELECT} WHERE ${where.text} ORDER BY p.published_at DESC NULLS LAST, p.created_at DESC
+      `${POST_SELECT} WHERE ${where.text} ORDER BY ${
+        filter.sort === 'popular' ? 'p.views DESC, p.published_at DESC NULLS LAST' : 'p.published_at DESC NULLS LAST, p.created_at DESC'
+      }
         LIMIT $${where.values.length + 1} OFFSET $${where.values.length + 2}`,
       [...where.values, p.perPage, p.offset],
     );
@@ -174,7 +223,28 @@ export class PgContentRepository extends PgRepo implements ContentRepository {
   }
 
   async findPostBySlug(slug: string): Promise<BlogPostRow | null> {
-    const row = await this.conn.one<BlogPostRow>(`${POST_SELECT} WHERE p.slug = $1 AND p.deleted_at IS NULL`, [slug]);
+    return this.loadPost(`${POST_SELECT} WHERE p.slug = $1 AND p.deleted_at IS NULL`, [slug]);
+  }
+
+  async findPostById(id: ID, options: { includeDeleted?: boolean } = {}): Promise<BlogPostRow | null> {
+    const alive = options.includeDeleted ? '' : ' AND p.deleted_at IS NULL';
+    return this.loadPost(`${POST_SELECT} WHERE p.id = $1${alive}`, [id]);
+  }
+
+  async restorePost(id: ID): Promise<BlogPostRow | null> {
+    const row = await this.conn.one<{ categoryId: ID | null }>(
+      `UPDATE blog_posts SET deleted_at = NULL, updated_at = now() WHERE id = $1 RETURNING category_id AS "categoryId"`,
+      [id],
+    );
+    if (!row) return null;
+    // The category's published-post count excludes deleted rows, so restoring changes it.
+    if (row.categoryId) await this.syncCategoryCount(row.categoryId);
+    return this.findPostById(id, { includeDeleted: true });
+  }
+
+  /** One row plus its tags. Shared by the slug and id lookups so they cannot drift. */
+  private async loadPost(query: string, params: unknown[]): Promise<BlogPostRow | null> {
+    const row = await this.conn.one<BlogPostRow>(query, params);
     if (!row) return null;
     const post = mapPost(row);
     const tags = await groupRelations<{ ownerId: ID; id: ID; slug: string; name: string }>(this.conn, {
@@ -200,6 +270,13 @@ export class PgContentRepository extends PgRepo implements ContentRepository {
 
   async updatePost(id: ID, patch: Partial<BlogPostRow>): Promise<BlogPostRow | null> {
     const columns = toColumns(patch, POST_FIELDS);
+    // Read the category it is leaving *before* the write: moving a post changes two
+    // counters, and re-syncing only the destination leaves the old category claiming a
+    // post that is no longer there — which then blocks deleting that category.
+    const previous = await this.conn.one<{ categoryId: ID | null }>(
+      `SELECT category_id AS "categoryId" FROM blog_posts WHERE id = $1`,
+      [id],
+    );
     if (Object.keys(columns).length > 0) {
       columns.updated_at = new Date();
       await this.update('blog_posts', 'id', id, columns);
@@ -207,9 +284,11 @@ export class PgContentRepository extends PgRepo implements ContentRepository {
     if (patch.tags) await this.setPostTags(id, patch.tags);
     const post = await this.conn.one<BlogPostRow>(`SELECT * FROM blog_posts WHERE id = $1`, [id]);
     if (post?.categoryId) await this.syncCategoryCount(post.categoryId);
+    if (previous?.categoryId && previous.categoryId !== post?.categoryId) await this.syncCategoryCount(previous.categoryId);
     return post ? this.findPostBySlug(post.slug) : null;
   }
 
+  /** Soft delete keeps the row (and its slug) out of every read path until restored. */
   async deletePost(id: ID, options: { hard?: boolean } = {}): Promise<boolean> {
     const post = await this.conn.one<{ categoryId: ID | null }>(`SELECT category_id AS "categoryId" FROM blog_posts WHERE id = $1`, [id]);
     const ok = options.hard
@@ -266,9 +345,14 @@ export class PgContentRepository extends PgRepo implements ContentRepository {
     return out;
   }
 
+  /** The stored counter kept in step with the same "live" definition listBlogCategories uses. */
   private async syncCategoryCount(categoryId: ID): Promise<void> {
     await this.conn.run(
-      `UPDATE blog_categories SET posts_count = (SELECT count(*)::int FROM blog_posts WHERE category_id = $1 AND status = 'published' AND deleted_at IS NULL) WHERE id = $1`,
+      `UPDATE blog_categories SET posts_count = (
+         SELECT count(*)::int FROM blog_posts
+          WHERE category_id = $1 AND deleted_at IS NULL
+            AND (status = 'published' OR (status = 'scheduled' AND published_at IS NOT NULL AND published_at <= now()))
+       ) WHERE id = $1`,
       [categoryId],
     );
   }

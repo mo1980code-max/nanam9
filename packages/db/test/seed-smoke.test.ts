@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { readdirSync } from 'node:fs';
+import { migrationsDir } from '../src/env.js';
 import { withDatabase, type TestDatabase } from './helpers/database.js';
 import { seedDatabase } from '../src/seed/content.js';
 import { verifyPassword } from '../src/passwords.js';
@@ -28,12 +30,17 @@ afterAll(async () => {
   await ctx?.close();
 });
 
+/** Derived from disk so adding a migration never turns this suite red by itself. */
+const MIGRATIONS = readdirSync(migrationsDir())
+  .filter((entry) => /^\d{14}_/.test(entry))
+  .sort();
+
 describe('migrations', () => {
-  it('applies both migrations and creates the full catalogue of tables', async () => {
+  it('applies every migration and creates the full catalogue of tables', async () => {
     const info = await ctx.conn.many<{ name: string }>(
       `SELECT migration_name AS name FROM _prisma_migrations ORDER BY migration_name`,
     );
-    expect(info.map((m) => m.name)).toEqual(['20260905120000_init', '20260905120200_search_and_constraints']);
+    expect(info.map((m) => m.name)).toEqual(MIGRATIONS);
 
     const tables = await ctx.conn.value<number>(
       `SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public'`,
@@ -46,7 +53,7 @@ describe('migrations', () => {
     const { migrationsDir } = await import('../src/env.js');
     const result = await migrate(ctx.conn, migrationsDir());
     expect(result.applied).toEqual([]);
-    expect(result.skipped.length).toBe(2);
+    expect(result.skipped.length).toBe(MIGRATIONS.length);
     expect(result.checksumMismatches).toEqual([]);
   });
 });

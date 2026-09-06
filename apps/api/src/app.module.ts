@@ -8,8 +8,9 @@
  *  · Middleware runs before guards (request id, client IP, play-session cookie,
  *    CSRF cookie), because guards depend on what it sets.
  *  · Feature modules are ordered by dependency, not alphabetically: auth first
- *    (everything else may need it), then the catalogue, then social, admin, cms,
- *    billing, realtime.
+ *    (everything else may need it), then the catalogue, then social, site, users,
+ *    cms, realtime. There is deliberately no billing module: payments and paid
+ *    subscriptions are out of scope for this product.
  */
 
 import { Module, type MiddlewareConsumer, type NestModule } from '@nestjs/common';
@@ -26,6 +27,7 @@ import { TaxonomyModule } from './modules/taxonomy/taxonomy.module.js';
 import { SiteModule } from './modules/site/site.module.js';
 import { SocialModule } from './modules/social/social.module.js';
 import { UsersModule } from './modules/users/users.module.js';
+import { CmsModule } from './modules/cms/cms.module.js';
 
 @Module({
   imports: [
@@ -46,6 +48,9 @@ import { UsersModule } from './modules/users/users.module.js';
     // favourites and playlists from every module above it.
     SiteModule,
     UsersModule,
+    // Content comes after users: a post's author is a user, and the blog listing
+    // renders that author's display name and avatar.
+    CmsModule,
   ],
 })
 export class AppModule implements NestModule {
