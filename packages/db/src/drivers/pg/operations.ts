@@ -138,14 +138,19 @@ export class PgOperationsRepository extends PgRepo implements OperationsReposito
     const row = await this.conn.one<ThemeRow>(
       `INSERT INTO themes (id, slug, name, is_active, is_default, config, preview_url, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,now())
-       ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, is_active = EXCLUDED.is_active,
+       -- is_active is deliberately NOT in the update list: editing a theme's name or
+       -- colours must not change which theme the site is serving.
+       ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name,
          config = EXCLUDED.config, preview_url = EXCLUDED.preview_url, updated_at = now()
        RETURNING *`,
       [
         newId(),
         data.slug,
         data.name,
-        data.isActive ?? true,
+        // A theme that was just registered is not live. `is_active` is only ever
+        // flipped by setDefaultTheme, so "save this theme" can never accidentally
+        // switch the whole site over to it.
+        data.isActive ?? false,
         data.isDefault ?? false,
         JSON.stringify(data.config ?? {}),
         data.previewUrl ?? null,
@@ -156,18 +161,41 @@ export class PgOperationsRepository extends PgRepo implements OperationsReposito
     return row;
   }
 
+  /**
+   * Switch the site over to one theme.
+   *
+   * Both flags are cleared first: `is_active` used to be set on the new theme
+   * without being cleared on the old ones, so every theme that had ever been
+   * activated stayed active and `GET /api/themes` reported four themes as live.
+   *
+   * Returns false when the slug matches no row, which is what lets the service
+   * answer 404 instead of reporting success for a theme that does not exist.
+   */
   async setDefaultTheme(slug: string): Promise<boolean> {
-    await this.conn.tx(async (tx) => {
-      await tx.run(`UPDATE themes SET is_default = false WHERE is_default = true`);
+    return this.conn.tx(async (tx) => {
+      // Existence is checked first rather than inferred from the UPDATE's rowcount:
+      // clearing the flags and then discovering the slug was unknown would leave the
+      // site with no active theme at all if the transaction ever failed to roll back.
+      const exists = await tx.value<number>(`SELECT 1 FROM themes WHERE slug = $1`, [slug]);
+      if (exists === null) return false;
+      // Both statements in one transaction, so a reader never sees the moment when
+      // no theme is active.
+      await tx.run(`UPDATE themes SET is_default = false, is_active = false WHERE is_default = true OR is_active = true`);
       await tx.run(`UPDATE themes SET is_default = true, is_active = true, updated_at = now() WHERE slug = $1`, [slug]);
+      return true;
     });
-    return true;
   }
 
   // ─────────────────────────────── redirects ───────────────────────────────
 
   async findRedirect(sourcePath: string): Promise<RedirectRow | null> {
     return this.conn.one<RedirectRow>(`SELECT * FROM redirects WHERE source_path = $1 AND is_active = true`, [sourcePath]);
+  }
+
+  async trackRedirectHit(id: ID): Promise<void> {
+    // Fire-and-forget counter: a hit tally must never be the reason a redirect
+    // response is slow or fails.
+    await this.conn.run(`UPDATE redirects SET hits = hits + 1 WHERE id = $1`, [id]);
   }
 
   async listRedirects(page?: { page: number; perPage: number; offset: number }): Promise<List<RedirectRow>> {

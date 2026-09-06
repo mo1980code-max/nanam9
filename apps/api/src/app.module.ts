@@ -23,7 +23,9 @@ import { GamesModule } from './modules/games/games.module.js';
 import { GamificationModule } from './modules/gamification/gamification.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { TaxonomyModule } from './modules/taxonomy/taxonomy.module.js';
+import { SiteModule } from './modules/site/site.module.js';
 import { SocialModule } from './modules/social/social.module.js';
+import { UsersModule } from './modules/users/users.module.js';
 
 @Module({
   imports: [
@@ -39,6 +41,11 @@ import { SocialModule } from './modules/social/social.module.js';
     GamesModule,
     TaxonomyModule,
     SocialModule,
+    // Site config comes after the catalogue because sections reference categories and
+    // games by slug; users come last because a profile aggregates plays, badges,
+    // favourites and playlists from every module above it.
+    SiteModule,
+    UsersModule,
   ],
 })
 export class AppModule implements NestModule {

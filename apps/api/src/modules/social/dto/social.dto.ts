@@ -22,7 +22,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { CommentListQuery, PaginationQuery } from '../../../common/dto/pagination.dto.js';
+import { CommentListQuery, AdminPaginationQuery, PaginationQuery } from '../../../common/dto/pagination.dto.js';
 
 const COMMENT_STATUSES = Object.values(CommentStatus);
 const VISIBILITIES = Object.values(PlaylistVisibility);
@@ -254,7 +254,7 @@ export class ResolveReportDto {
   resolution?: string;
 }
 
-export class ReportsQueryDto extends PaginationQuery {
+export class ReportsQueryDto extends AdminPaginationQuery {
   @ApiPropertyOptional({ enum: [...REPORT_STATUSES, 'any'] })
   @IsOptional()
   @IsIn([...REPORT_STATUSES, 'any'] as unknown as string[])

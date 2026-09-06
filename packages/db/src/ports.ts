@@ -877,6 +877,15 @@ export interface OperationsRepository {
   setDefaultTheme(slug: string): Promise<boolean>;
 
   findRedirect(sourcePath: string): Promise<RedirectRow | null>;
+  /**
+   * Count a redirect that was actually served.
+   *
+   * `hits` is the only evidence an editor has about whether a legacy URL still
+   * receives traffic, which is exactly the question "can I retire this redirect?"
+   * asks. Without it, redirects accumulate forever because deleting one feels like
+   * gambling with inbound links.
+   */
+  trackRedirectHit(id: ID): Promise<void>;
   listRedirects(page?: Page): Promise<List<RedirectRow>>;
   upsertRedirect(data: { sourcePath: string; targetPath: string; statusCode?: number }): Promise<RedirectRow>;
   deleteRedirect(id: ID): Promise<boolean>;

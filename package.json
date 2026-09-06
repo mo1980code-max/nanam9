@@ -24,7 +24,6 @@
     "test": "npm run -s bridge && python3 tools/verify_php.py && python3 tools/prove_runtime.py && python3 tools/gen_schema_sql.py --verify && python3 tools/gen_license_rules.py --verify && python3 -c \"import json;[json.load(open(f)) for f in ['db/schema.json','db/migrations.json','db/license_rules.json','db/oss_pack.json','composer.json']];print('✓ json valid')\"",
     "install-site": "php bin/install.php",
     "export-static": "php bin/export.php dist",
-
     "//voltade": "── Voltade (TypeScript) ──",
     "db:up": "npm run pglite:server -w @voltade/db",
     "db:migrate": "npm run migrate -w @voltade/db",
@@ -33,17 +32,21 @@
     "db:studio": "npm run studio -w @voltade/db",
     "db:generate": "npm run generate -w @voltade/db",
     "build:packages": "npm run build -w @voltade/shared && npm run build -w @voltade/db",
-    "build": "npm run build:packages && npm run build -w @voltade/api && npm run build -w @voltade/web",
+    "//build": "apps/web joins `build` as soon as apps/web/src/app exists (phase 5 — the views). Until then a root build that fails on a directory nobody has written yet is just noise.",
+    "build": "npm run build:packages && npm run build -w @voltade/api",
+    "build:web": "npm run build -w @voltade/web",
+    "build:all": "npm run build && npm run build:web",
     "typecheck": "npm run build:packages && npm run typecheck -w @voltade/api && npm run typecheck -w @voltade/web",
     "test:api": "npm run test -w @voltade/api",
     "test:db": "npm run test -w @voltade/db",
     "test:web": "npm run test -w @voltade/web",
-    "test:voltade": "npm run build:packages && npm run test:db && npm run test:api && npm run test:web",
+    "test:voltade": "npm run build:packages && npm run test:shared && npm run test:db && npm run test:api && npm run test:web",
     "test:all": "npm run test && npm run test:voltade",
     "dev:api": "npm run start:dev -w @voltade/api",
     "dev:web": "npm run dev -w @voltade/web",
     "dev": "npm run build:packages && concurrently -k -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
-    "start": "concurrently -k -n api,web -c magenta,cyan \"npm:start -w @voltade/api\" \"npm:start -w @voltade/web\""
+    "start": "concurrently -k -n api,web -c magenta,cyan \"npm:start -w @voltade/api\" \"npm:start -w @voltade/web\"",
+    "test:shared": "npm run test -w @voltade/shared"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

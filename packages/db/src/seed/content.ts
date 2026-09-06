@@ -14,7 +14,7 @@
  * provider+id) and upserted, so running the seeder twice changes nothing.
  */
 
-import { PERMISSIONS, ROLE_LEVELS, ROLE_PERMISSIONS, slugify } from '@voltade/shared';
+import { PERMISSIONS, ROLE_LEVELS, ROLE_PERMISSIONS, SETTINGS_CATALOGUE, slugify } from '@voltade/shared';
 import type { Database, ID } from '../ports.js';
 import { hashPassword, seedAdminPassword } from '../passwords.js';
 
@@ -386,54 +386,25 @@ export async function seedDatabase(db: Database, options: SeedOptions = {}): Pro
   ]);
 
   // 2. Settings — one JSON row per key, `is_public` decides what the web may see.
-  const settings: [string, unknown, string, boolean, string?][] = [
-    ['site.name', 'Voltade', 'general', true, 'اسم الموقع'],
-    ['site.nameEn', 'Voltade', 'general', true],
-    ['site.tagline', 'بوابة ألعاب HTML5 — العب فورًا بدون تحميل', 'general', true, 'الوصف المختصر'],
-    ['site.taglineEn', 'Play instantly. No downloads.', 'general', true],
-    ['site.baseUrl', baseUrl, 'general', false, 'الرابط الأساسي (يُستخدم في sitemap و JSON-LD)'],
-    ['site.locale', 'ar', 'general', true],
-    ['site.logoUrl', '/brand/logo.svg', 'general', true],
-    ['site.ogImageUrl', '/brand/og-default.svg', 'general', true],
-    ['games.perPage', 24, 'games', true],
-    ['games.commentsPerPage', 20, 'games', true],
-    ['games.guestComments', true, 'games', true, 'السماح للزوار بالتعليق'],
-    ['games.commentModeration', 'guests', 'games', false, 'off | guests | all'],
-    ['games.autoPublishImports', false, 'games', false, 'نشر الألعاب المستوردة تلقائيًا أم وضعها في قائمة المراجعة'],
-    ['games.interstitialEvery', 4, 'ads', false, 'عدد الجولات بين إعلان بيني وآخر'],
-    ['users.registrationEnabled', true, 'users', true],
-    ['users.oauth.google', false, 'users', false],
-    ['users.oauth.facebook', false, 'users', false],
-    ['users.oauth.discord', false, 'users', false],
-    ['seo.defaultTitle', 'Voltade — العب ألعاب HTML5 مجانًا', 'seo', true],
-    ['seo.titleTemplate', '%s · Voltade', 'seo', true],
-    ['seo.defaultDescription', 'آلاف ألعاب HTML5 المجانية تعمل مباشرة في المتصفح: أكشن، سباقات، ألغاز، رياضة وألعاب أطفال — بدون تحميل أو تثبيت.', 'seo', true],
-    ['seo.keywords', 'العاب html5, العاب فلاش, العاب مجانية, العاب اونلاين, arcade games, html5 games', 'seo', true],
-    ['theme.slug', 'voltade-neon', 'design', true],
-    ['theme.mode', 'system', 'design', true, 'light | dark | system'],
-    ['theme.customCursor', false, 'design', true],
-    ['ads.enabled', true, 'ads', true],
-    ['ads.adsenseClient', '', 'ads', false, 'ca-pub-XXXXXXXXXXXXXXXX'],
-    ['ads.prebidEnabled', false, 'ads', false],
-    ['analytics.ga4', '', 'analytics', true, 'G-XXXXXXXXXX'],
-    ['analytics.cloudflareToken', '', 'analytics', false],
-    ['pwa.enabled', true, 'pwa', true],
-    ['import.cronEnabled', false, 'import', false],
-  ];
-  for (const [key, value, group, isPublic, description] of settings) {
+  //    The catalogue lives in @voltade/shared: the seeder writes it, the settings API
+  //    validates and defaults against it, and the admin UI builds its tabs from it.
+  //    A key that exists in only one of those three is a key an operator can save and
+  //    the site then ignores — which is exactly the drift this shared list removes.
+  for (const [key, def] of Object.entries(SETTINGS_CATALOGUE)) {
     const existing = await db.operations.getSetting(key);
     // Never overwrite a value an operator has already changed.
     if (existing) continue;
     await db.operations.setSetting({
       key,
-      value,
-      group,
-      isPublic,
-      description,
-      type: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'string',
+      // The base URL comes from the install, not from the catalogue.
+      value: key === 'site.baseUrl' ? baseUrl : def.value,
+      type: def.type,
+      group: def.group,
+      isPublic: def.isPublic,
+      description: def.description,
     });
   }
-  log(options, `settings: ${settings.length} keys`);
+  log(options, `settings: ${Object.keys(SETTINGS_CATALOGUE).length} keys`);
 
   // 3. Themes + homepage sections (the drag & drop builder's starting layout).
   const themes = [

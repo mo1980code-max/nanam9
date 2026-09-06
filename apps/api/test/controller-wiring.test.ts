@@ -43,7 +43,9 @@ function valueImports(source: string): Set<string> {
   let match: RegExpExecArray | null;
   while ((match = re.exec(source))) {
     const wholeImportIsType = Boolean(match[1]);
-    for (const raw of match[2].split(',')) {
+    // `noUncheckedIndexedAccess`: a capture group is `string | undefined` even when the
+    // pattern guarantees it, so fall back to '' rather than asserting.
+    for (const raw of (match[2] ?? '').split(',')) {
       const spec = raw.trim();
       if (!spec) continue;
       // `import { type Foo }` erases Foo exactly like `import type { Foo }`.
@@ -68,7 +70,7 @@ describe('controller wiring', () => {
       const typeOnly = /import\s+type\s+\{([^}]*)\}\s+from/g;
       let match: RegExpExecArray | null;
       while ((match = typeOnly.exec(source))) {
-        for (const name of match[1].split(',')) {
+        for (const name of (match[1] ?? '').split(',')) {
           const local = name.split(/\s+as\s+/).pop()!.trim();
           if (/Dto$/.test(local)) offenders.push(`${relative(SRC, file)}: import type { ${local} }`);
         }
@@ -76,7 +78,7 @@ describe('controller wiring', () => {
       // … and `import { type FooDto }`, which erases the same way.
       const inline = /import\s+\{([^}]*)\}\s+from/g;
       while ((match = inline.exec(source))) {
-        for (const spec of match[1].split(',')) {
+        for (const spec of (match[1] ?? '').split(',')) {
           const trimmed = spec.trim();
           if (!trimmed.startsWith('type ')) continue;
           const local = trimmed.slice(5).split(/\s+as\s+/).pop()!.trim();
@@ -94,12 +96,15 @@ describe('controller wiring', () => {
       // A DTO may also be declared in the controller file itself; what matters is
       // that the identifier exists at runtime, not where it came from.
       const values = valueImports(source);
-      for (const declared of source.matchAll(/(?:^|\n)\s*(?:export\s+)?class\s+([A-Za-z_$][\w$]*)/g)) values.add(declared[1]);
+      for (const declared of source.matchAll(/(?:^|\n)\s*(?:export\s+)?class\s+([A-Za-z_$][\w$]*)/g)) {
+        const name = declared[1];
+        if (name) values.add(name);
+      }
       // Parameter annotations that follow a body/query decorator.
       const re = /@(?:Body|Query)\([^)]*\)\s*(?:@[A-Za-z]+\([^)]*\)\s*)*([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)/g;
       let match: RegExpExecArray | null;
       while ((match = re.exec(source))) {
-        const type = match[2];
+        const type = match[2] ?? '';
         if (!/Dto$/.test(type)) continue;
         if (!values.has(type)) missing.push(`${relative(SRC, file)}: ${match[1]}: ${type}`);
       }

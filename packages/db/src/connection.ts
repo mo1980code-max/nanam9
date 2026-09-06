@@ -82,6 +82,18 @@ export function createConnection(options: ConnectionOptions): Connection {
 
   const log = options.log ?? process.env.SQL_LOG === '1';
 
+  /**
+   * Clients that are already inside a transaction.
+   *
+   * `tx()` has to be re-entrant: a transactional repository method is called from a
+   * service-level transaction all the time, and a nested BEGIN is a warning at best.
+   * Tracking it explicitly also means a caller that hands us a dedicated client
+   * instead of a pool still gets a real BEGIN/COMMIT/ROLLBACK — the alternative is a
+   * `tx()` that quietly commits statement by statement, which is the worst kind of
+   * bug to find in production.
+   */
+  const inTransaction = new WeakSet<object>();
+
   const makeConnection = (client: pg.PoolClient | pg.Pool): Connection => {
     const exec = async <T>(query: SqlInput, values: unknown[] = []): Promise<QueryResult<T>> => {
       const { text, values: params } = toQuery(query, values);
@@ -110,6 +122,7 @@ export function createConnection(options: ConnectionOptions): Connection {
           // A pool-level transaction needs a dedicated client; nested tx() calls
           // reuse the same client so a repository method can call another one.
           const pc = await pool.connect();
+          inTransaction.add(pc);
           try {
             await pc.query('BEGIN');
             const result = await fn(makeConnection(pc as unknown as pg.Pool));
@@ -119,10 +132,25 @@ export function createConnection(options: ConnectionOptions): Connection {
             await pc.query('ROLLBACK');
             throw err;
           } finally {
+            inTransaction.delete(pc);
             pc.release();
           }
         }
-        return fn(client as unknown as Connection);
+        // A dedicated client that is already inside a transaction: join it, so a
+        // nested tx() cannot start a second one.
+        if (inTransaction.has(client)) return fn(client as unknown as Connection);
+        inTransaction.add(client);
+        try {
+          await client.query('BEGIN');
+          const result = await fn(client as unknown as Connection);
+          await client.query('COMMIT');
+          return result;
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
+        } finally {
+          inTransaction.delete(client);
+        }
       },
       unsafe: async (text: string) => {
         await client.query(text);

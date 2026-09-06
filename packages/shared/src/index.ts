@@ -15,6 +15,7 @@ export * from './constants.js';
 export * from './enums.js';
 export * from './format.js';
 export * from './pagination.js';
+export * from './sanitize.js';
 export * from './seo.js';
 export * from './text.js';
 export * from './url-guard.js';

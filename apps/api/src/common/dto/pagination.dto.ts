@@ -38,6 +38,47 @@ export class PaginationQuery {
   }
 }
 
+/**
+ * Pagination for staff-only lists, with the wider page-size ceiling.
+ *
+ * Deliberately NOT `class AdminPaginationQuery extends PaginationQuery` with a
+ * re-declared `perPage`. Measured behaviour (class-validator 0.15 + class-transformer
+ * 0.5, tsc and esbuild alike): when a subclass re-declares a property, class-validator
+ * keeps ONLY the subclass's validation metadata for it, while class-transformer still
+ * applies the parent's `@Type`. So a one-line "widen the cap" subclass silently drops
+ * every other rule on that field — `?perPage=abc` is transformed to `null` by the
+ * inherited `@Type(() => Number)` and then reported as a `max` violation instead of
+ * "must be an integer", and `@IsOptional` is gone with it.
+ *
+ * Repeating all four decorators in a subclass would work, but it is the same number of
+ * lines with one more way to be quietly wrong. This class states the whole contract
+ * once; apps/api/test/pagination.test.ts pins the behaviour down.
+ */
+export class AdminPaginationQuery {
+  @ApiPropertyOptional({ minimum: 1, default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page = 1;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: PAGINATION.adminMaxPerPage, default: PAGINATION.defaultPerPage })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(PAGINATION.adminMaxPerPage)
+  perPage = PAGINATION.defaultPerPage;
+
+  get offset(): number {
+    return (this.page - 1) * this.perPage;
+  }
+
+  get pageArg(): { page: number; perPage: number; offset: number } {
+    return { page: this.page, perPage: this.perPage, offset: this.offset };
+  }
+}
+
 export class GameListQuery extends PaginationQuery {
   @ApiPropertyOptional({ description: 'free-text search over title, description and tags (Arabic + English)' })
   @IsOptional()

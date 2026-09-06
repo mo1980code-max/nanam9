@@ -1,5 +1,7 @@
 /** Site-wide constants. One place to change a limit, a TTL or a cookie name. */
 
+import type { SettingType } from './enums.js';
+
 export const APP_NAME = 'Voltade';
 export const APP_NAME_AR = 'فولتايد';
 
@@ -36,7 +38,16 @@ export const LIMITS = {
 
 export const PAGINATION = {
   defaultPerPage: 24,
+  /**
+   * Public ceiling. A crawler can request any page size in a loop and the CDN caches
+   * the response, so this is a response-weight limit as much as a database one.
+   */
   maxPerPage: 60,
+  /**
+   * Staff ceiling. Triage screens (reports, activity, the user grid) legitimately offer
+   * "100 rows" and are behind the RolesGuard, so they get a wider page than the public.
+   */
+  adminMaxPerPage: 100,
   commentsPerPage: 20,
   searchPerPage: 20,
 } as const;
@@ -204,6 +215,8 @@ export const CACHE = {
     search: (hash: string) => `search:${hash}`,
     stats: (range: string) => `stats:${range}`,
     ads: (placement: string) => `ads:${placement}`,
+    /** The active theme is read on every page shell render, so it is cached longest. */
+    theme: (scope: 'active' | 'all') => `theme:${scope}`,
     rateLimit: (bucket: string) => `rl:${bucket}`,
     loginAttempts: (key: string) => `login:${key}`,
     otp: (key: string) => `otp:${key}`,
@@ -254,9 +267,27 @@ export const RATE_LIMITS = {
   global: { windowSeconds: 60, max: 300 },
   /** Sign-ups and OAuth starts: per IP, because there is no user yet. */
   auth: { windowSeconds: 60, max: 10 },
-  /** Password logins get their own tighter budget — this is the brute-force wall. */
-  login: { windowSeconds: 300, max: 8 },
-  write: { windowSeconds: 60, max: 30 },
+  /**
+   * Password logins, per IP — the credential-stuffing wall: it caps how many
+   * *different* accounts one host can try.
+   *
+   * It is deliberately not the brute-force defence for a single account. That is
+   * AuthService's per-account backoff (8 failures per 15 minutes, keyed on the
+   * account), which still holds when an attacker rotates IP addresses. Keeping the
+   * two separate is what lets this one be generous: a school, an office or a mobile
+   * carrier NATs dozens of players behind one address, and 8 sign-ins per five
+   * minutes would lock the whole building out.
+   */
+  login: { windowSeconds: 300, max: 20 },
+  /**
+   * Every authenticated write that has no bucket of its own: profile edits, playlist
+   * and settings saves, taxonomy edits, moderation, publishing. One per second
+   * sustained is a real ceiling on a compromised account, while still letting an
+   * editor work through a 40-row admin grid without being interrupted. The writes
+   * that are actually abused (comments, logins, sign-ups, imports) keep their own
+   * tighter budgets below.
+   */
+  write: { windowSeconds: 60, max: 60 },
   /**
    * Comments are per-user over five minutes. 20 is generous enough for a lively
    * thread but still caps a compromised account; guests are additionally
@@ -266,6 +297,14 @@ export const RATE_LIMITS = {
   play: { windowSeconds: 60, max: 60 },
   search: { windowSeconds: 60, max: 60 },
   import: { windowSeconds: 3600, max: 12 },
+  /**
+   * Staff endpoints — reads and writes alike. These are already behind the
+   * RolesGuard, a CSRF token and the audit log, so this budget is about capping the
+   * blast radius of a compromised staff session, not about stopping spam: two
+   * requests a second, sustained. Editors legitimately work faster than a player
+   * ever needs to (saving a forty-row grid, publishing a batch of imports), which
+   * is why they do not share the player `write` budget.
+   */
   admin: { windowSeconds: 60, max: 120 },
 } as const;
 
@@ -316,3 +355,92 @@ export const IMAGE_SIZES = {
     [192, 192],
   ],
 } as const;
+
+/**
+ * The settings catalogue: every key the product understands, with its factory value,
+ * type, admin group, visibility and help text.
+ *
+ * WHY THIS LIVES HERE AND NOT IN THE SEEDER OR THE API: three consumers need the
+ * same list — the seeder (factory state), the settings API (validation, defaults,
+ * "is this key still at its factory value?") and the admin UI (which builds its tabs
+ * from `group` and its help text from `description`). Two of them used to keep their
+ * own copy, and the two copies had already drifted (`site.logo` vs `site.logoUrl`,
+ * `social.commentsEnabled` vs `games.guestComments`) — a drift that shows up as a
+ * setting the admin saves and the site ignores.
+ *
+ * `isPublic` decides whether the key is served to anonymous visitors by
+ * `GET /api/settings`. Keys that look like credentials are additionally refused
+ * `isPublic: true` at write time and filtered again at read time, so a mistaken flag
+ * is not enough to publish a secret.
+ */
+export type SettingDefinition = {
+  /** Factory value, used until an operator writes the key. */
+  value: unknown;
+  /** Drives coercion on write and on read. */
+  type: SettingType;
+  /** Admin tab; also the first segment of the key by convention. */
+  group: string;
+  isPublic: boolean;
+  description: string;
+};
+
+export const SETTINGS_CATALOGUE: Record<string, SettingDefinition> = {
+  // ── identity ──────────────────────────────────────────────────────────────
+  'site.name': { value: 'Voltade', type: 'string', group: 'general', isPublic: true, description: 'اسم الموقع' },
+  'site.nameEn': { value: 'Voltade', type: 'string', group: 'general', isPublic: true, description: 'Site name (English)' },
+  'site.tagline': { value: 'بوابة ألعاب HTML5 — العب فورًا بدون تحميل', type: 'string', group: 'general', isPublic: true, description: 'الوصف المختصر' },
+  'site.taglineEn': { value: 'Play instantly. No downloads.', type: 'string', group: 'general', isPublic: true, description: 'Short description (English)' },
+  'site.baseUrl': { value: '', type: 'string', group: 'general', isPublic: false, description: 'الرابط الأساسي (يُستخدم في sitemap و JSON-LD) — يُشتق من APP_URL عند تركه فارغًا' },
+  'site.locale': { value: 'ar', type: 'string', group: 'general', isPublic: true, description: 'اللغة الافتراضية للزائر الجديد' },
+  'site.logoUrl': { value: '/brand/logo.svg', type: 'image', group: 'general', isPublic: true, description: 'شعار الموقع' },
+  'site.ogImageUrl': { value: '/brand/og-default.svg', type: 'image', group: 'general', isPublic: true, description: 'صورة المشاركة الافتراضية (Open Graph)' },
+
+  // ── games & social ────────────────────────────────────────────────────────
+  'games.perPage': { value: 24, type: 'number', group: 'games', isPublic: true, description: 'عدد الألعاب في الصفحة الواحدة' },
+  'games.commentsPerPage': { value: 20, type: 'number', group: 'games', isPublic: true, description: 'عدد التعليقات في الصفحة' },
+  'games.guestComments': { value: true, type: 'boolean', group: 'games', isPublic: true, description: 'السماح للزوار بالتعليق (تخضع لإشراف مسبق)' },
+  'games.commentModeration': { value: 'guests', type: 'string', group: 'games', isPublic: false, description: 'off | guests | all' },
+  'games.autoPublishImports': { value: false, type: 'boolean', group: 'games', isPublic: false, description: 'نشر الألعاب المستوردة تلقائيًا أم وضعها في قائمة المراجعة' },
+  'games.ratingsEnabled': { value: true, type: 'boolean', group: 'games', isPublic: true, description: 'إتاحة التقييم بالنجوم' },
+
+  // ── users ─────────────────────────────────────────────────────────────────
+  'users.registrationEnabled': { value: true, type: 'boolean', group: 'users', isPublic: true, description: 'السماح بإنشاء حسابات جديدة' },
+  'users.oauth.google': { value: false, type: 'boolean', group: 'users', isPublic: false, description: 'تفعيل تسجيل الدخول عبر Google' },
+  'users.oauth.facebook': { value: false, type: 'boolean', group: 'users', isPublic: false, description: 'تفعيل تسجيل الدخول عبر Facebook' },
+  'users.oauth.discord': { value: false, type: 'boolean', group: 'users', isPublic: false, description: 'تفعيل تسجيل الدخول عبر Discord' },
+
+  // ── SEO ───────────────────────────────────────────────────────────────────
+  'seo.defaultTitle': { value: 'Voltade — العب ألعاب HTML5 مجانًا', type: 'string', group: 'seo', isPublic: true, description: 'العنوان الافتراضي للصفحات' },
+  'seo.titleTemplate': { value: '%s · Voltade', type: 'string', group: 'seo', isPublic: true, description: 'قالب العنوان — %s يُستبدل بعنوان الصفحة' },
+  'seo.defaultDescription': { value: 'آلاف ألعاب HTML5 المجانية تعمل مباشرة في المتصفح: أكشن، سباقات، ألغاز، رياضة وألعاب أطفال — بدون تحميل أو تثبيت.', type: 'string', group: 'seo', isPublic: true, description: 'الوصف الافتراضي لمحركات البحث' },
+  'seo.keywords': { value: 'العاب html5, العاب فلاش, العاب مجانية, العاب اونلاين, arcade games, html5 games', type: 'string', group: 'seo', isPublic: true, description: 'كلمات مفتاحية افتراضية' },
+
+  // ── design ────────────────────────────────────────────────────────────────
+  'theme.slug': { value: 'voltade-neon', type: 'string', group: 'design', isPublic: true, description: 'السمة الافتراضية' },
+  'theme.mode': { value: 'system', type: 'string', group: 'design', isPublic: true, description: 'light | dark | system' },
+  'theme.customCursor': { value: false, type: 'boolean', group: 'design', isPublic: true, description: 'مؤشر مخصص' },
+
+  // ── monetisation & analytics ──────────────────────────────────────────────
+  'ads.enabled': { value: true, type: 'boolean', group: 'ads', isPublic: true, description: 'عرض الإعلانات للزوار غير المشتركين' },
+  'ads.adsenseClient': { value: '', type: 'string', group: 'ads', isPublic: false, description: 'ca-pub-XXXXXXXXXXXXXXXX' },
+  'ads.prebidEnabled': { value: false, type: 'boolean', group: 'ads', isPublic: false, description: 'تفعيل header bidding' },
+  'games.interstitialEvery': { value: 4, type: 'number', group: 'ads', isPublic: false, description: 'عدد الجولات بين إعلان بيني وآخر' },
+  'analytics.ga4': { value: '', type: 'string', group: 'analytics', isPublic: true, description: 'G-XXXXXXXXXX' },
+  'analytics.cloudflareToken': { value: '', type: 'string', group: 'analytics', isPublic: false, description: 'رمز Cloudflare Web Analytics' },
+
+  // ── platform ──────────────────────────────────────────────────────────────
+  'pwa.enabled': { value: true, type: 'boolean', group: 'pwa', isPublic: true, description: 'تفعيل التطبيق القابل للتثبيت' },
+  'import.cronEnabled': { value: false, type: 'boolean', group: 'import', isPublic: false, description: 'تشغيل الاستيراد التلقائي المجدول' },
+  'maintenance.enabled': { value: false, type: 'boolean', group: 'maintenance', isPublic: true, description: 'وضع الصيانة: يعرض صفحة الصيانة لكل الزوار' },
+  'maintenance.message': { value: 'نقوم بأعمال صيانة، نعود بعد قليل.', type: 'string', group: 'maintenance', isPublic: true, description: 'رسالة صفحة الصيانة' },
+  /**
+   * The one key whose value is code by design: analytics, GTM and ad tags go inside
+   * `<head>` and must execute. It is the only namespace the sanitiser lets through
+   * unsanitised, it still requires `settings.manage`, and every write is audited.
+   */
+  'integrations.headHtml': { value: '', type: 'html', group: 'integrations', isPublic: true, description: 'وسوم تُحقن داخل <head> (تحليلات، إعلانات). تُنفَّذ كما هي.' },
+};
+
+export const SETTING_KEYS = Object.keys(SETTINGS_CATALOGUE);
+/** Groups in the order the admin tabs should appear. */
+export const SETTING_GROUPS = ['general', 'seo', 'games', 'users', 'design', 'ads', 'analytics', 'pwa', 'import', 'maintenance', 'integrations'] as const;
