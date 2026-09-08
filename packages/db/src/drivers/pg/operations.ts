@@ -259,7 +259,13 @@ export class PgOperationsRepository extends PgRepo implements OperationsReposito
   > {
     const conds: SqlPart[] = [];
     if (filter.actorId) conds.push(eq('actor_id', filter.actorId)!);
-    if (filter.action) conds.push(eq('action', filter.action)!);
+    if (filter.action) {
+      // Prefix match on purpose: the vocabulary is family.action, and families
+      // come in singular AND plural flavours (game.update, games.reorder,
+      // category.create, categories.reorder…). Filtering "game" must catch both;
+      // an exact action string still matches itself as its own prefix.
+      conds.push(sql`${sql.raw('action')} LIKE ${`${filter.action}%`}`);
+    }
     const where = resolvePart(sql.and(...conds));
     const p = pageOf(filter.page, 50);
     const total = (await this.conn.value<number>(`SELECT count(*)::int FROM activity_logs WHERE ${where.text}`, where.values)) ?? 0;

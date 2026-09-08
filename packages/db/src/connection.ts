@@ -67,10 +67,24 @@ export type ConnectionOptions = {
   log?: boolean;
 };
 
+/**
+ * The bundled dev database (PGlite behind a socket server on port 5433) is ONE
+ * WebAssembly Postgres: it serialises queries internally and drops sockets when
+ * a pool opens many concurrent connections — which surfaced as ECONNRESET
+ * storms taking down unrelated requests. Real Postgres handles the classic pool
+ * of 10 happily, so the cap applies only to the dev URL, and DATABASE_POOL_MAX
+ * overrides either side when someone knows better.
+ */
+function defaultPoolMax(connectionString: string): number {
+  const fromEnv = Number(process.env.DATABASE_POOL_MAX);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.trunc(fromEnv);
+  return /@(?:127\.0\.0\.1|localhost):5433\//.test(connectionString) ? 2 : 10;
+}
+
 export function createConnection(options: ConnectionOptions): Connection {
   const pool = new Pool({
     connectionString: options.connectionString,
-    max: options.max ?? 10,
+    max: options.max ?? defaultPoolMax(options.connectionString),
     idleTimeoutMillis: options.idleTimeoutMillis ?? 30_000,
     connectionTimeoutMillis: options.connectionTimeoutMillis ?? 10_000,
     // `application_name` shows up in pg_stat_activity, so "which process holds

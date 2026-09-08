@@ -170,6 +170,17 @@ export class SiteAdminController {
     return this.site.removeRedirect(requestMeta(req), id);
   }
 
+  // ── live stats ───────────────────────────────────────────────────────────
+
+  @Get('stats')
+  @Permissions('stats.view')
+  @RateLimit('admin')
+  @ApiOperation({ summary: 'Dashboard: totals, daily timeline, top games, breakdowns' })
+  async stats(@Query('days') days?: string) {
+    const n = Math.trunc(Number(days));
+    return this.site.dashboard(Number.isFinite(n) && n > 0 ? Math.min(n, 90) : 14);
+  }
+
   // ── activity log ─────────────────────────────────────────────────────────
 
   @Get('activity')

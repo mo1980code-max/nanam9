@@ -555,10 +555,33 @@ export class SiteService {
 
   // ── activity log ─────────────────────────────────────────────────────────
 
+  /**
+   * The admin dashboard in one call.
+   *
+   * Everything here reads the pre-aggregated `daily_stats` rollup (plus a handful of
+   * count(*) over indexed columns) — never the raw `game_plays` stream — so the
+   * dashboard stays fast no matter how many plays a busy portal records. That is the
+   * difference between an ops screen people keep open and one nobody dares refresh.
+   */
+  async dashboard(days: number): Promise<unknown> {
+    const to = new Date();
+    const from = new Date(to.getTime() - (days - 1) * 86_400_000);
+    from.setHours(0, 0, 0, 0);
+    return this.db.engagement.dashboard({ from, to });
+  }
+
   async activity(query: ActivityQueryDto): Promise<{ items: ActivityView[]; total: number }> {
+    // Operators filter by the human label they see in the log ("admin"), not by
+    // the opaque id the column stores — resolve username → id, and fall back to
+    // the raw value so filtering by id keeps working.
+    let actorId = query.actor;
+    if (actorId) {
+      const user = await this.db.identity.findUserByUsername(actorId);
+      if (user) actorId = user.id; // not a username? the raw id passes through unchanged
+    }
     const result = await this.db.operations.listActivity({
       action: query.action,
-      actorId: query.actor,
+      actorId,
       page: query.pageArg,
     });
     return { items: result.items.map(activityView), total: result.total };

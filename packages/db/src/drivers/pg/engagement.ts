@@ -195,54 +195,59 @@ export class PgEngagementRepository extends PgRepo implements EngagementReposito
     const to = range?.to ?? new Date();
     const from = range?.from ?? new Date(to.getTime() - 29 * DAY_MS);
 
-    const [totals, timeline, topGames, sources, devices, countries, categories, pendingComments, openReports, revenue, subs] =
-      await Promise.all([
-        this.conn.one<{ games: number; publishedGames: number; users: number; plays: number; comments: number }>(
-          `SELECT (SELECT count(*)::int FROM games WHERE deleted_at IS NULL) AS "games",
-                  (SELECT count(*)::int FROM games WHERE status = 'published' AND deleted_at IS NULL) AS "publishedGames",
-                  (SELECT count(*)::int FROM users WHERE deleted_at IS NULL) AS "users",
-                  (SELECT coalesce(sum(plays), 0)::int FROM games) AS "plays",
-                  (SELECT count(*)::int FROM comments WHERE deleted_at IS NULL) AS "comments"`,
-        ),
-        this.conn.many<{ day: string; views: number; plays: number; uniqueVisitors: number }>(
-          `SELECT to_char(day, 'YYYY-MM-DD') AS day, sum(views)::int AS "views", sum(plays)::int AS plays,
-                  sum(unique_visitors)::int AS "uniqueVisitors"
-             FROM daily_stats WHERE dimension = 'site' AND day >= $1::date AND day <= $2::date
-            GROUP BY day ORDER BY day`,
-          [from, to],
-        ),
-        this.conn.many<{ id: ID; slug: string; title: string; thumbnailUrl: string; plays: number; ratingAvg: number }>(
-          `SELECT id, slug, title, thumbnail_url AS "thumbnailUrl", plays, rating_avg AS "ratingAvg"
-             FROM games WHERE status = 'published' AND deleted_at IS NULL
-            ORDER BY plays DESC LIMIT 10`,
-        ),
-        this.conn.many<{ source: string; plays: number }>(
-          `SELECT key AS source, sum(plays)::int AS plays FROM daily_stats
-            WHERE dimension = 'source' AND day >= $1::date AND day <= $2::date
-            GROUP BY key ORDER BY plays DESC LIMIT 10`,
-          [from, to],
-        ),
-        this.conn.many<{ device: string; plays: number }>(
-          `SELECT key AS device, sum(plays)::int AS plays FROM daily_stats
-            WHERE dimension = 'device' AND day >= $1::date AND day <= $2::date
-            GROUP BY key ORDER BY plays DESC`,
-          [from, to],
-        ),
-        this.conn.many<{ country: string; plays: number }>(
-          `SELECT key AS country, sum(plays)::int AS plays FROM daily_stats
-            WHERE dimension = 'country' AND day >= $1::date AND day <= $2::date
-            GROUP BY key ORDER BY plays DESC LIMIT 15`,
-          [from, to],
-        ),
-        this.conn.many<{ slug: string; name: string; gamesCount: number }>(
-          `SELECT slug, name, games_count AS "gamesCount" FROM categories
-            WHERE deleted_at IS NULL ORDER BY games_count DESC LIMIT 10`,
-        ),
-        this.conn.value<number>(`SELECT count(*)::int FROM comments WHERE status = 'pending' AND deleted_at IS NULL`),
-        this.conn.value<number>(`SELECT count(*)::int FROM reports WHERE status = 'open'`),
-        this.conn.value<number>(`SELECT coalesce(sum(amount_cents), 0)::int FROM payments WHERE status = 'succeeded'`),
-        this.conn.value<number>(`SELECT count(*)::int FROM subscriptions WHERE status = 'active'`),
-      ]);
+    // NOTE: no payments/subscriptions queries here on purpose. Billing was cut from
+    // the product, and those two counters were the only part of this dashboard that
+    // touched tables the migrated schema does not even guarantee — on PGlite the
+    // missing-relation error took the whole connection down with it (ECONNRESET),
+    // which turned the admin dashboard into a denial-of-service against its own DB.
+    // Sequential ON PURPOSE. The dev PGlite socket server keeps a small connection
+    // budget; firing nine queries through Promise.all at once reset connections
+    // mid-flight (ECONNRESET) and took the whole dashboard — and its siblings —
+    // down. Every query here is an indexed count or a rollup read, so serial
+    // execution costs milliseconds and buys reliability.
+    const totals = await this.conn.one<{ games: number; publishedGames: number; users: number; plays: number; comments: number }>(
+      `SELECT (SELECT count(*)::int FROM games WHERE deleted_at IS NULL) AS "games",
+              (SELECT count(*)::int FROM games WHERE status = 'published' AND deleted_at IS NULL) AS "publishedGames",
+              (SELECT count(*)::int FROM users WHERE deleted_at IS NULL) AS "users",
+              (SELECT coalesce(sum(plays), 0)::int FROM games) AS "plays",
+              (SELECT count(*)::int FROM comments WHERE deleted_at IS NULL) AS "comments"`,
+    );
+    const timeline = await this.conn.many<{ day: string; views: number; plays: number; uniqueVisitors: number }>(
+      `SELECT to_char(day, 'YYYY-MM-DD') AS day, sum(views)::int AS "views", sum(plays)::int AS plays,
+              sum(unique_visitors)::int AS "uniqueVisitors"
+         FROM daily_stats WHERE dimension = 'site' AND day >= $1::date AND day <= $2::date
+        GROUP BY day ORDER BY day`,
+      [from, to],
+    );
+    const topGames = await this.conn.many<{ id: ID; slug: string; title: string; thumbnailUrl: string; plays: number; ratingAvg: number }>(
+      `SELECT id, slug, title, thumbnail_url AS "thumbnailUrl", plays, rating_avg AS "ratingAvg"
+         FROM games WHERE status = 'published' AND deleted_at IS NULL
+        ORDER BY plays DESC LIMIT 10`,
+    );
+    const sources = await this.conn.many<{ source: string; plays: number }>(
+      `SELECT key AS source, sum(plays)::int AS plays FROM daily_stats
+        WHERE dimension = 'source' AND day >= $1::date AND day <= $2::date
+        GROUP BY key ORDER BY plays DESC LIMIT 10`,
+      [from, to],
+    );
+    const devices = await this.conn.many<{ device: string; plays: number }>(
+      `SELECT key AS device, sum(plays)::int AS plays FROM daily_stats
+        WHERE dimension = 'device' AND day >= $1::date AND day <= $2::date
+        GROUP BY key ORDER BY plays DESC`,
+      [from, to],
+    );
+    const countries = await this.conn.many<{ country: string; plays: number }>(
+      `SELECT key AS country, sum(plays)::int AS plays FROM daily_stats
+        WHERE dimension = 'country' AND day >= $1::date AND day <= $2::date
+        GROUP BY key ORDER BY plays DESC LIMIT 15`,
+      [from, to],
+    );
+    const categories = await this.conn.many<{ slug: string; name: string; gamesCount: number }>(
+      `SELECT slug, name, games_count AS "gamesCount" FROM categories
+        WHERE deleted_at IS NULL ORDER BY games_count DESC LIMIT 10`,
+    );
+    const pendingComments = await this.conn.value<number>(`SELECT count(*)::int FROM comments WHERE status = 'pending' AND deleted_at IS NULL`);
+    const openReports = await this.conn.value<number>(`SELECT count(*)::int FROM reports WHERE status = 'open'`);
 
     return {
       totals: {
@@ -253,8 +258,8 @@ export class PgEngagementRepository extends PgRepo implements EngagementReposito
         comments: totals?.comments ?? 0,
         pendingComments: pendingComments ?? 0,
         openReports: openReports ?? 0,
-        revenueCents: revenue ?? 0,
-        activeSubscriptions: subs ?? 0,
+        revenueCents: 0, // billing removed from the product; kept in the type for API stability
+        activeSubscriptions: 0,
       },
       timeline,
       topGames,
