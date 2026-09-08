@@ -37,8 +37,8 @@ export class RequestContextMiddleware implements NestMiddleware {
       sid = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '').slice(0, 16);
       res.cookie(COOKIES.playSession, sid, {
         httpOnly: false, // the client reads it to correlate its own analytics events
-        secure: this.config.COOKIE_SECURE || this.config.isProduction,
-        sameSite: 'lax',
+        secure: this.config.COOKIE_SECURE || this.config.isProduction || this.config.COOKIE_SAMESITE === 'none',
+        sameSite: this.config.COOKIE_SAMESITE,
         path: '/',
         maxAge: PLAY_SESSION_TTL_DAYS * 86_400_000,
         domain: this.config.COOKIE_DOMAIN || undefined,

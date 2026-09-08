@@ -28,7 +28,7 @@ export function LocaleSwitch({ locale }: { locale: Locale }) {
     <a
       href={target}
       onClick={() => {
-        document.cookie = `${LOCALE_COOKIE}=${other}; path=/; max-age=31536000; samesite=lax`;
+        document.cookie = `${LOCALE_COOKIE}=${other}; path=/; max-age=31536000; samesite=none; secure`;
       }}
       className="btn btn-ghost !px-3 text-xs font-black"
       title={t(locale, 'lang.aria')}

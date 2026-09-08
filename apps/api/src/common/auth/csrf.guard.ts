@@ -74,8 +74,8 @@ export class CsrfCookieMiddleware implements NestMiddleware {
       if (!existing || existing.length < 32) {
         res.cookie(CSRF_COOKIE, randomBytes(32).toString('base64url'), {
           httpOnly: false, // the whole point: our own JavaScript must be able to read it
-          secure: this.config.COOKIE_SECURE || this.config.isProduction,
-          sameSite: 'lax',
+          secure: this.config.COOKIE_SECURE || this.config.isProduction || this.config.COOKIE_SAMESITE === 'none',
+          sameSite: this.config.COOKIE_SAMESITE,
           path: '/',
           domain: this.config.COOKIE_DOMAIN || undefined,
           maxAge: 7 * 86_400_000,

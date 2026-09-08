@@ -209,12 +209,13 @@ export class TokenService {
 
 /** Cookie options in one place — the flags are the security policy. */
 export function cookieOptions(config: AppConfig, { maxAgeSeconds, httpOnly = true }: { maxAgeSeconds?: number; httpOnly?: boolean }) {
+  const sameSite = config.COOKIE_SAMESITE;
   return {
     httpOnly,
-    secure: config.COOKIE_SECURE || config.isProduction,
-    // Lax, not None: the API and the web app share a registrable domain, and Lax
-    // still blocks cross-site POSTs from carrying the cookie (CSRF's main vector).
-    sameSite: 'lax' as const,
+    // SameSite=None (embedded previews) legally requires Secure; over the https
+    // proxy that holds, and the double-submit CSRF token stays mandatory anyway.
+    secure: config.COOKIE_SECURE || config.isProduction || sameSite === 'none',
+    sameSite,
     path: '/',
     domain: config.COOKIE_DOMAIN || undefined,
     ...(maxAgeSeconds ? { maxAge: maxAgeSeconds * 1000 } : {}),

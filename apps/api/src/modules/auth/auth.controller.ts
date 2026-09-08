@@ -215,8 +215,8 @@ export class AuthController {
     // OAuth flow, so a forged callback cannot sign an attacker's account in here.
     res.cookie(OAUTH_STATE_COOKIE, `${provider}:${state}:${encodeURIComponent(query.redirect ?? '/me')}`, {
       httpOnly: true,
-      secure: this.config.COOKIE_SECURE || this.config.isProduction,
-      sameSite: 'lax',
+      secure: this.config.COOKIE_SECURE || this.config.isProduction || this.config.COOKIE_SAMESITE === 'none',
+      sameSite: this.config.COOKIE_SAMESITE,
       maxAge: 10 * 60 * 1000,
       path: '/',
     });

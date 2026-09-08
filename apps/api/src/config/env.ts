@@ -69,6 +69,10 @@ const EnvSchema = z.object({
 
   COOKIE_DOMAIN: z.string().optional(),
   COOKIE_SECURE: booleanish.default(false),
+  /// 'lax' is right in production (same-site web+api). 'none' is for embedded
+  /// previews: the app runs in a cross-site iframe, where the browser drops
+  /// Lax cookies and no session can ever stick. None requires Secure.
+  COOKIE_SAMESITE: z.enum(['lax', 'strict', 'none']).default('lax'),
   CSRF_ENABLED: booleanish.default(true),
 
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
