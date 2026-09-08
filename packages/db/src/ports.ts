@@ -128,6 +128,7 @@ export type TagRow = {
   id: ID;
   slug: string;
   name: string;
+  nameEn: string | null;
   scope: string;
   gamesCount: number;
   createdAt: Date;
@@ -196,7 +197,7 @@ export type GameRow = {
   createdAt: Date;
   updatedAt: Date;
   categories?: Pick<CategoryRow, 'id' | 'slug' | 'name'>[];
-  tags?: Pick<TagRow, 'id' | 'slug' | 'name'>[];
+  tags?: Pick<TagRow, 'id' | 'slug' | 'name' | 'nameEn'>[];
   assets?: GameAssetRow[];
 };
 
@@ -378,7 +379,7 @@ export type BlogPostRow = {
   updatedAt: Date;
   author?: { id: ID; username: string; displayName: string | null; avatarUrl: string | null };
   category?: Pick<BlogCategoryRow, 'id' | 'slug' | 'name'> | null;
-  tags?: Pick<TagRow, 'id' | 'slug' | 'name'>[];
+  tags?: Pick<TagRow, 'id' | 'slug' | 'name' | 'nameEn'>[];
 };
 
 export type SettingRow = {
@@ -696,6 +697,8 @@ export interface CatalogRepository {
   listTags(options?: { scope?: string; q?: string; limit?: number }): Promise<TagRow[]>;
   findTagBySlug(slug: string, scope?: string): Promise<TagRow | null>;
   upsertTags(tags: (string | { slug: string; name: string })[], scope?: string): Promise<TagRow[]>;
+  /** Display-only rename (name/nameEn); the slug is the stable key and never changes here. */
+  updateTag(id: ID, patch: { name?: string; nameEn?: string | null }): Promise<TagRow | null>;
 }
 
 export interface SocialRepository {

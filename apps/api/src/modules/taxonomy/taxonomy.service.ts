@@ -28,7 +28,7 @@ import { AppError } from '../../common/http/errors.js';
 import type { RequestMeta } from '../../common/http/request-meta.js';
 import { absoluteUrl, localized } from '../../common/http/urls.js';
 import { CONFIG, type AppConfig } from '../../config/env.js';
-import type { CreateCategoryDto, ReorderCategoriesDto, TagQueryDto, UpdateCategoryDto, UpsertTagsDto } from './dto/taxonomy.dto.js';
+import type { CreateCategoryDto, ReorderCategoriesDto, TagQueryDto, UpdateCategoryDto, UpdateTagDto, UpsertTagsDto } from './dto/taxonomy.dto.js';
 
 export type CategoryNode = {
   id: string;
@@ -54,7 +54,7 @@ export type CategoryDetail = {
   seo: { title: string; description: string | null; keywords: string | null; canonical: string | null };
 };
 
-export type TagNode = { id: string; slug: string; name: string; gamesCount: number; url: string };
+export type TagNode = { id: string; slug: string; name: string; nameEn: string | null; gamesCount: number; url: string };
 
 export type Suggestion = {
   categories: { slug: string; name: string; url: string; gamesCount: number }[];
@@ -269,6 +269,22 @@ export class TaxonomyService {
     return { reordered: dto.ids.length };
   }
 
+  /** Display-only rename (Arabic name / English nameEn). The slug — the stable key everywhere — never changes. */
+  async updateTag(meta: RequestMeta, id: string, dto: UpdateTagDto): Promise<TagRow> {
+    const row = await this.db.catalog.updateTag(id, {
+      name: dto.name !== undefined ? dto.name.trim() : undefined,
+      nameEn: dto.nameEn !== undefined ? dto.nameEn.trim() || null : undefined,
+    });
+    if (!row) throw new AppError('tag.not_found', `no tag with id ${id}`, 404);
+    this.audit.record(meta, {
+      action: 'tag.update',
+      targetKind: 'tag',
+      targetId: id,
+      after: { slug: row.slug, name: row.name, nameEn: row.nameEn },
+    });
+    return row;
+  }
+
   async upsertTags(meta: RequestMeta, dto: UpsertTagsDto): Promise<TagRow[]> {
     const rows = await this.db.catalog.upsertTags(dto.tags, dto.scope ?? 'game');
     this.audit.record(meta, { action: 'tags.upsert', targetKind: 'tag', after: { count: rows.length, scope: dto.scope ?? 'game' } });
@@ -322,7 +338,7 @@ export class TaxonomyService {
   }
 
   private tag(row: TagRow): TagNode {
-    return { id: row.id, slug: row.slug, name: row.name, gamesCount: row.gamesCount, url: `/tag/${row.slug}` };
+    return { id: row.id, slug: row.slug, name: row.name, nameEn: row.nameEn ?? null, gamesCount: row.gamesCount, url: `/tag/${row.slug}` };
   }
 
   private name(row: CategoryRow, locale: Locale): string {

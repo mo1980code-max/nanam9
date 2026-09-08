@@ -170,13 +170,13 @@ export const GAME_CATEGORIES_SQL = `
    ORDER BY c.sort_order, c.name`;
 
 export const GAME_TAGS_SQL = `
-  SELECT tg.game_id AS owner_id, t.id, t.slug, t.name
+  SELECT tg.game_id AS owner_id, t.id, t.slug, t.name, t.name_en AS "nameEn"
     FROM tag_game tg JOIN tags t ON t.id = tg.tag_id
    WHERE tg.game_id = ANY($1)
    ORDER BY t.name`;
 
 export const POST_TAGS_SQL = `
-  SELECT bt.post_id AS owner_id, t.id, t.slug, t.name
+  SELECT bt.post_id AS owner_id, t.id, t.slug, t.name, t.name_en AS "nameEn"
     FROM blog_post_tag bt JOIN tags t ON t.id = bt.tag_id
    WHERE bt.post_id = ANY($1)
    ORDER BY t.name`;

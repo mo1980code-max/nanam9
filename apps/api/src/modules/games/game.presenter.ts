@@ -129,7 +129,7 @@ export function createGamePresenter(locale: Locale, base: string): GamePresenter
     height: row.height,
     publishedAt: iso(row.publishedAt),
     categories: (row.categories ?? []).map((category) => ({ slug: category.slug, name: category.name })),
-    tags: (row.tags ?? []).map((tag) => ({ slug: tag.slug, name: tag.name })),
+    tags: (row.tags ?? []).map((tag) => ({ slug: tag.slug, name: tag.name, nameEn: tag.nameEn ?? null })),
   });
 
   const detail = (row: GameRow): GameDetail => {

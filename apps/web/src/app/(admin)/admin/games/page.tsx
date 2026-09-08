@@ -15,7 +15,7 @@
  *   restored. Switching "show deleted" reveals it with a restore button.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/client-api';
 import { mediaUrl } from '@/lib/api';
 
@@ -142,6 +142,104 @@ export default function GamesManagerPage() {
     if (code === 200) await load();
     setBusyId(null);
   };
+
+  // ── ZIP upload: the endpoint validates the archive (index.html, size, path
+  // traversal), stores it content-addressed and can turn it into a draft ──
+  const [uploaderOpen, setUploaderOpen] = useState(false);
+  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [zipSlug, setZipSlug] = useState('');
+  const [makeDraft, setMakeDraft] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<{ title: string; entryPointUrl: string; sizeKb: number; warnings: string[]; game?: { slug: string; status: string } } | null>(null);
+  const [uploadError, setUploadError] = useState('');
+
+  const submitZip = async () => {
+    if (!zipFile) {
+      setUploadError('اختر ملف ZIP أولًا.');
+      return;
+    }
+    setUploading(true);
+    setUploadError('');
+    setUploadResult(null);
+    const data = new FormData();
+    data.append('file', zipFile);
+    const query = new URLSearchParams();
+    if (makeDraft) query.set('create', '1');
+    if (zipSlug.trim()) query.set('slug', zipSlug.trim());
+    const { status: code, payload } = await apiFetch<Record<string, unknown>>(
+      `/admin/games/upload${query.toString() ? `?${query.toString()}` : ''}`,
+      { method: 'POST', body: data },
+    );
+    setUploading(false);
+    if (code === 201 || code === 200) {
+      const body = (payload as { data?: Record<string, unknown> })?.data ?? (payload as Record<string, unknown>);
+      setUploadResult({
+        title: String(body.title ?? zipFile.name),
+        entryPointUrl: String(body.entryPointUrl ?? ''),
+        sizeKb: Number(body.sizeKb ?? 0),
+        warnings: Array.isArray(body.warnings) ? (body.warnings as string[]) : [],
+        game: body.game as { slug: string; status: string } | undefined,
+      });
+      await load();
+    } else {
+      const err = (payload as { error?: { message?: string }; message?: string })?.error?.message
+        ?? (payload as { message?: string })?.message;
+      setUploadError(err || `تعذّر الرفع (${code})`);
+    }
+  };
+
+  // ── artwork upload: fills the thumbnail/banner path fields in the editor ──
+  const [imageBusy, setImageBusy] = useState<'thumbnail' | 'banner' | null>(null);
+  const thumbInput = useRef<HTMLInputElement>(null);
+  const bannerInput = useRef<HTMLInputElement>(null);
+
+  const uploadImage = async (kind: 'thumbnail' | 'banner', file: File) => {
+    setImageBusy(kind);
+    setFormError('');
+    const data = new FormData();
+    data.append('file', file);
+    const { status: code, payload } = await apiFetch<Record<string, unknown>>(
+      `/admin/games/upload/image?kind=${kind}`,
+      { method: 'POST', body: data },
+    );
+    setImageBusy(null);
+    if (code === 201 || code === 200) {
+      const body = (payload as { data?: Record<string, unknown> })?.data ?? (payload as Record<string, unknown>);
+      const url = typeof body.url === 'string' ? body.url : '';
+      setForm((f) => ({ ...f, [kind === 'thumbnail' ? 'thumbnailUrl' : 'bannerUrl']: url }));
+    } else {
+      const err = (payload as { error?: { message?: string } })?.error?.message;
+      setFormError(err || `تعذّر رفع الصورة (${code})`);
+    }
+  };
+
+  const imageField = (kind: 'thumbnail' | 'banner', label: string, value: string, onChange: (v: string) => void) => (
+    <label className="grid gap-1">
+      <span className="text-[10px] font-bold text-muted">{label}</span>
+      <div className="flex gap-2">
+        <input className="input !py-2 text-sm" dir="ltr" value={value} placeholder="/games/x/thumb.svg" onChange={(event) => onChange(event.target.value)} />
+        <button
+          type="button"
+          className="btn btn-ghost shrink-0 text-xs"
+          disabled={imageBusy === kind}
+          onClick={() => (kind === 'thumbnail' ? thumbInput.current : bannerInput.current)?.click()}
+        >
+          {imageBusy === kind ? '…' : '⬆ رفع'}
+        </button>
+        <input
+          ref={kind === 'thumbnail' ? thumbInput : bannerInput}
+          type="file"
+          hidden
+          accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void uploadImage(kind, file);
+            event.target.value = '';
+          }}
+        />
+      </div>
+    </label>
+  );
 
   const openEditor = (game: AdminGame) => {
     setEditing(game);
@@ -274,6 +372,19 @@ export default function GamesManagerPage() {
         </label>
         <button type="button" onClick={() => void load()} className="btn btn-ghost text-xs">
           ↻ تحديث
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setUploaderOpen(true);
+            setUploadResult(null);
+            setUploadError('');
+            setZipFile(null);
+            setZipSlug('');
+          }}
+          className="btn btn-primary text-xs"
+        >
+          ⬆ رفع لعبة (ZIP)
         </button>
         <p className="ms-auto text-[11px] text-muted">{nf.format(total)} لعبة</p>
       </div>
@@ -447,8 +558,8 @@ export default function GamesManagerPage() {
                   {field('الارتفاع', form.height, (v) => setForm({ ...form, height: v }), { dir: 'ltr', placeholder: '560' })}
                 </div>
               </div>
-              {field('صورة مصغرة (مسار)', form.thumbnailUrl, (v) => setForm({ ...form, thumbnailUrl: v }), { dir: 'ltr', placeholder: '/games/x/thumb.svg' })}
-              {field('بانر (مسار)', form.bannerUrl, (v) => setForm({ ...form, bannerUrl: v }), { dir: 'ltr' })}
+              {imageField('thumbnail', 'صورة مصغرة (مسار أو رفع)', form.thumbnailUrl, (v) => setForm({ ...form, thumbnailUrl: v }))}
+              {imageField('banner', 'بانر (مسار أو رفع)', form.bannerUrl, (v) => setForm({ ...form, bannerUrl: v }))}
               {field('التصنيفات (slugs مفصولة بفواصل)', form.categories, (v) => setForm({ ...form, categories: v }), { dir: 'ltr', placeholder: 'arcade, classic' })}
               {field('الوسوم (slugs مفصولة بفواصل)', form.tags, (v) => setForm({ ...form, tags: v }), { dir: 'ltr', placeholder: 'retro, high-score' })}
 
@@ -474,6 +585,69 @@ export default function GamesManagerPage() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------- ZIP uploader */}
+      {uploaderOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={() => !uploading && setUploaderOpen(false)}>
+          <div className="card w-full max-w-lg p-6" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="رفع لعبة">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-black text-ink">رفع لعبة HTML5</h2>
+              <button type="button" onClick={() => setUploaderOpen(false)} className="btn btn-ghost !px-2 !py-1 text-sm" aria-label="إغلاق">✕</button>
+            </div>
+
+            {uploadResult ? (
+              <div className="grid gap-3">
+                <p className="rounded-xl bg-emerald-500/10 p-3 text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                  ✓ رُفع «{uploadResult.title}» ({nf.format(uploadResult.sizeKb)} ك.ب)
+                </p>
+                {uploadResult.game ? (
+                  <p className="text-xs text-muted">
+                    أُنشئت مسودة باسم <span className="font-bold text-ink" dir="ltr">/{uploadResult.game.slug}</span> — عدّل بياناتها ثم انشرها من الجدول.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted">لم تُنشأ مسودة — استخدم «تعديل» على أي لعبة والصق رابط التشغيل في حقل URL.</p>
+                )}
+                <p className="break-all text-[11px] text-muted" dir="ltr">{uploadResult.entryPointUrl}</p>
+                {uploadResult.warnings.length > 0 && (
+                  <ul className="grid gap-1 rounded-xl bg-amber-500/10 p-3 text-[11px] text-amber-700 dark:text-amber-400">
+                    {uploadResult.warnings.map((warning) => <li key={warning}>⚠ {warning}</li>)}
+                  </ul>
+                )}
+                <div className="flex justify-end gap-2 border-t border-[var(--border)] pt-4">
+                  <button type="button" onClick={() => setUploaderOpen(false)} className="btn btn-primary text-xs">تم</button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-3">
+                <label className="grid gap-1">
+                  <span className="text-[10px] font-bold text-muted">ملف اللعبة (ZIP يحوي index.html)</span>
+                  <input
+                    type="file"
+                    accept=".zip,application/zip"
+                    className="input !py-2 text-sm"
+                    onChange={(event) => setZipFile(event.target.files?.[0] ?? null)}
+                  />
+                </label>
+                {field('Slug اختياري (يُشتق من اسم الملف)', zipSlug, (v) => setZipSlug(v), { dir: 'ltr', placeholder: 'my-game' })}
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-bold text-ink">
+                  <input type="checkbox" className="checkbox" checked={makeDraft} onChange={(event) => setMakeDraft(event.target.checked)} />
+                  إنشاء مسودة تلقائيًا بعد الرفع
+                </label>
+                <p className="text-[11px] leading-5 text-muted">
+                  يتحقق النظام من البنية (index.html، الحجم، مسارات الخروج) ويرفض الأرشيفات المكررة تلقائيًا عبر بصمة المصدر.
+                </p>
+                {uploadError && <p className="rounded-xl bg-red-500/10 p-3 text-xs font-bold text-red-600 dark:text-red-400">{uploadError}</p>}
+                <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] pt-4">
+                  <button type="button" disabled={uploading} onClick={() => setUploaderOpen(false)} className="btn btn-ghost text-xs">إلغاء</button>
+                  <button type="button" disabled={uploading || !zipFile} onClick={() => void submitZip()} className="btn btn-primary text-xs">
+                    {uploading ? 'جارٍ الرفع…' : 'رفع'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

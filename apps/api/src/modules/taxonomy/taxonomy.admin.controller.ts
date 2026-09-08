@@ -11,7 +11,7 @@ import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { Permissions, RateLimit } from '../../common/decorators/index.js';
 import { requestMeta } from '../../common/http/request-meta.js';
-import { CreateCategoryDto, ReorderCategoriesDto, TagQueryDto, UpdateCategoryDto, UpsertTagsDto } from './dto/taxonomy.dto.js';
+import { CreateCategoryDto, ReorderCategoriesDto, TagQueryDto, UpdateCategoryDto, UpdateTagDto, UpsertTagsDto } from './dto/taxonomy.dto.js';
 import { TaxonomyService } from './taxonomy.service.js';
 
 @ApiTags('admin · taxonomy')
@@ -94,5 +94,15 @@ export class TaxonomyAdminController {
   async upsertTags(@Req() req: Request, @Body() dto: UpsertTagsDto) {
     const items = await this.taxonomy.upsertTags(requestMeta(req), dto);
     return { items, total: items.length };
+  }
+
+  @Patch('tags/:id')
+  @Permissions('tags.manage')
+  @RateLimit('write')
+  @ApiOperation({ summary: 'Rename a tag (Arabic name / English nameEn). The slug never changes.' })
+  @ApiParam({ name: 'id' })
+  @ApiResponse({ status: 404, description: 'Unknown tag' })
+  async updateTag(@Req() req: Request, @Param('id') id: string, @Body() dto: UpdateTagDto) {
+    return this.taxonomy.updateTag(requestMeta(req), id, dto);
   }
 }

@@ -279,7 +279,7 @@ export class PgCatalogRepository extends PgRepo implements CatalogRepository {
     const ids = rows.map((r) => r.id);
     const [cats, tags, assets] = await Promise.all([
       withRelations.includes('categories') ? groupRelations<{ ownerId: ID; id: ID; slug: string; name: string }>(this.conn, { ids, query: GAME_CATEGORIES_SQL }) : null,
-      withRelations.includes('tags') ? groupRelations<{ ownerId: ID; id: ID; slug: string; name: string }>(this.conn, { ids, query: GAME_TAGS_SQL }) : null,
+      withRelations.includes('tags') ? groupRelations<{ ownerId: ID; id: ID; slug: string; name: string; nameEn: string | null }>(this.conn, { ids, query: GAME_TAGS_SQL }) : null,
       withRelations.includes('assets')
         ? groupRelations<GameAssetRow & { ownerId: ID }>(this.conn, {
             ids,
@@ -289,7 +289,7 @@ export class PgCatalogRepository extends PgRepo implements CatalogRepository {
     ]);
     for (const row of rows) {
       if (cats) row.categories = (cats.get(row.id) ?? []).map(({ id, slug, name }) => ({ id, slug, name }));
-      if (tags) row.tags = (tags.get(row.id) ?? []).map(({ id, slug, name }) => ({ id, slug, name }));
+      if (tags) row.tags = (tags.get(row.id) ?? []).map(({ id, slug, name, nameEn }) => ({ id, slug, name, nameEn }));
       if (assets) row.assets = assets.get(row.id) ?? [];
     }
   }
@@ -512,6 +512,22 @@ export class PgCatalogRepository extends PgRepo implements CatalogRepository {
   }
 
   /** Creates missing tags and returns all of them, in input order. */
+  async updateTag(id: ID, patch: { name?: string; nameEn?: string | null }): Promise<TagRow | null> {
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    if (patch.name !== undefined) {
+      values.push(patch.name.trim());
+      sets.push(`name = $${values.length}`);
+    }
+    if (patch.nameEn !== undefined) {
+      values.push(patch.nameEn?.trim() || null);
+      sets.push(`name_en = $${values.length}`);
+    }
+    if (!sets.length) return this.conn.one<TagRow>(`SELECT * FROM tags WHERE id = $1`, [id]);
+    values.push(id);
+    return this.conn.one<TagRow>(`UPDATE tags SET ${sets.join(', ')} WHERE id = $${values.length} RETURNING *`, values);
+  }
+
   async upsertTags(tags: (string | { slug: string; name: string })[], scope: 'game' | 'blog' = 'game'): Promise<TagRow[]> {
     const normalised = tags
       .map((t) => (typeof t === 'string' ? { name: t.trim(), slug: slugify(t) } : { name: t.name.trim(), slug: t.slug || slugify(t.name) }))

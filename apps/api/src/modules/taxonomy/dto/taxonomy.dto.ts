@@ -8,7 +8,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUrl, Max, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PaginationQuery } from '../../../common/dto/pagination.dto.js';
 
@@ -146,6 +146,21 @@ export class TagQueryDto {
   @Min(1)
   @Max(200)
   limit = 60;
+}
+
+export class UpdateTagDto {
+  @ApiPropertyOptional({ description: 'Arabic display name' })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  name?: string;
+
+  @ApiPropertyOptional({ description: 'English display name; empty string clears it' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  nameEn?: string;
 }
 
 export class UpsertTagsDto {

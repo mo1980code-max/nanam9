@@ -189,7 +189,7 @@ export default async function GamesPage({
               <div className="flex flex-wrap gap-1.5">
                 {tags.slice(0, 18).map((tag) => (
                   <Link key={tag.slug} href={chipHref(locale, query, { tag: tag.slug })} className={`chip text-[11px] ${activeTag === tag.slug ? 'chip-active' : ''}`}>
-                    {tag.name}
+                    {pick(locale, tag.name, tag.nameEn)}
                   </Link>
                 ))}
               </div>

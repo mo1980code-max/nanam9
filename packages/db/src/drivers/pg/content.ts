@@ -250,11 +250,11 @@ export class PgContentRepository extends PgRepo implements ContentRepository {
     const row = await this.conn.one<BlogPostRow>(query, params);
     if (!row) return null;
     const post = mapPost(row);
-    const tags = await groupRelations<{ ownerId: ID; id: ID; slug: string; name: string }>(this.conn, {
+    const tags = await groupRelations<{ ownerId: ID; id: ID; slug: string; name: string; nameEn: string | null }>(this.conn, {
       ids: [post.id],
       query: POST_TAGS_SQL,
     });
-    post.tags = (tags.get(post.id) ?? []).map(({ id, slug: s, name }) => ({ id, slug: s, name }));
+    post.tags = (tags.get(post.id) ?? []).map(({ id, slug: s, name, nameEn }) => ({ id, slug: s, name, nameEn }));
     return post;
   }
 

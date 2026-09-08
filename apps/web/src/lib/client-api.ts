@@ -28,7 +28,10 @@ export async function apiFetch<T = unknown>(
   const method = options.method ?? 'GET';
   const headers: Record<string, string> = { accept: 'application/json' };
   const unsafe = method !== 'GET';
-  if (options.body !== undefined) headers['content-type'] = 'application/json';
+  // FormData must NOT get a JSON content-type: the browser attaches the multipart
+  // boundary itself, and setting it manually breaks every file upload.
+  const form = typeof FormData !== 'undefined' && options.body instanceof FormData ? options.body : null;
+  if (options.body !== undefined && !form) headers['content-type'] = 'application/json';
 
   const token = readCookie('voltade_csrf');
   if (unsafe && token) headers['x-csrf-token'] = token;
@@ -38,7 +41,7 @@ export async function apiFetch<T = unknown>(
       method,
       headers,
       credentials: 'same-origin',
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: form ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
     });
     const text = await response.text();
     let payload: ApiEnvelope<T>;

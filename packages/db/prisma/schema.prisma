@@ -581,6 +581,7 @@ model Tag {
   id         String   @id @default(cuid()) @db.VarChar(30)
   slug       String   @unique @db.VarChar(80)
   name       String   @db.VarChar(80)
+  nameEn     String?  @map("name_en") @db.VarChar(80)
   scope      TagScope @default(game)
   gamesCount Int      @default(0) @map("games_count")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)

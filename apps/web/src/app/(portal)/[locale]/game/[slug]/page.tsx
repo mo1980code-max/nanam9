@@ -223,7 +223,7 @@ export default async function GamePage({ params }: { params: Promise<Params> }) 
                 {tags.map((tag) => (
                   <Link key={tag.slug} href={l(locale, `/games?tag=${encodeURIComponent(tag.slug)}`)} className="chip">
                     <span aria-hidden>#</span>
-                    {tag.name}
+                    {pick(locale, tag.name, tag.nameEn)}
                   </Link>
                 ))}
               </div>
