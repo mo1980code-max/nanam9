@@ -17,8 +17,10 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { t, type Locale } from '@/lib/i18n';
 
 type Props = {
+  locale?: Locale;
   slug: string;
   title: string;
   src: string;
@@ -28,7 +30,7 @@ type Props = {
   orientation: string | null;
 };
 
-export function GamePlayer({ slug, title, src, poster, width, height, orientation }: Props) {
+export function GamePlayer({ slug, title, src, poster, width, height, orientation, locale = 'ar' }: Props) {
   const [started, setStarted] = useState(false);
   const [loading, setLoading] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -65,7 +67,7 @@ export function GamePlayer({ slug, title, src, poster, width, height, orientatio
           <iframe
             ref={frameRef}
             key={slug}
-            title={`لعبة ${title}`}
+            title={t(locale, 'game.playerTitle', { title })}
             src={src}
             className="absolute inset-0 h-full w-full border-0"
             allow="autoplay; fullscreen; gamepad; xr-spatial-tracking"
@@ -78,12 +80,12 @@ export function GamePlayer({ slug, title, src, poster, width, height, orientatio
             onClick={start}
             className="group absolute inset-0 flex w-full flex-col items-center justify-center gap-4 bg-cover bg-center text-white"
             style={poster ? { backgroundImage: `linear-gradient(to top, rgba(4,4,12,.86), rgba(4,4,12,.35)), url(${poster})` } : undefined}
-            aria-label={`ابدأ لعب ${title}`}
+            aria-label={t(locale, 'game.startAria', { title })}
           >
             <span className="grid h-20 w-20 place-items-center rounded-full bg-gradient-to-br from-brand to-accent text-3xl shadow-2xl transition-transform group-hover:scale-110">
               <span aria-hidden>▶</span>
             </span>
-            <span className="rounded-full bg-black/55 px-4 py-1.5 text-sm font-black backdrop-blur">اضغط للعب</span>
+            <span className="rounded-full bg-black/55 px-4 py-1.5 text-sm font-black backdrop-blur">{t(locale, 'game.tapToPlay')}</span>
           </button>
         )}
 
@@ -96,11 +98,11 @@ export function GamePlayer({ slug, title, src, poster, width, height, orientatio
 
       <div className="flex items-center justify-between gap-3 border-t border-line bg-surface px-3 py-2">
         <p className="truncate text-xs text-muted">
-          تعمل اللعبة داخل إطار معزول — إن لم تبدأ، تحقّق من مانع الإعلانات أو
-          <span className="font-bold"> {orientation === 'portrait' ? 'أدر جهازك عموديًا' : 'أعد تحميل الصفحة'}</span>.
+          {t(locale, 'game.frameNote')}
+          <span className="font-bold"> {orientation === 'portrait' ? t(locale, 'game.rotatePortrait') : t(locale, 'game.reloadPage')}</span>.
         </p>
         <button type="button" onClick={toggleFullscreen} className="btn btn-ghost !px-3 !py-1.5 text-xs">
-          <span aria-hidden>⛶</span> ملء الشاشة
+          <span aria-hidden>⛶</span> {t(locale, 'game.fullscreen')}
         </button>
       </div>
     </div>

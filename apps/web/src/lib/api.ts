@@ -28,7 +28,7 @@ export { GAME_SORTS } from '@voltade/shared';
 
 const API_ORIGIN = (process.env.API_INTERNAL_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '');
 
-export type Term = { slug: string; name: string };
+export type Term = { slug: string; name: string; nameEn?: string | null };
 
 export type GameCard = {
   id: string;

@@ -93,7 +93,8 @@ const cells = (line: string): string[] =>
     .split('|')
     .map((cell) => cell.trim());
 
-export function Markdown({ source, className = 'prose-ar' }: { source: string; className?: string }) {
+export function Markdown({ source, className, locale = 'ar' }: { source: string; className?: string; locale?: import('@/lib/i18n').Locale }) {
+  className = className ?? (locale === 'en' ? 'prose-en' : 'prose-ar');
   const lines = String(source ?? '').replace(/\r\n/g, '\n').split('\n');
   const blocks: ReactNode[] = [];
   let paragraph: string[] = [];

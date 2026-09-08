@@ -17,12 +17,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, errorMessage } from '@/lib/client-api';
 import type { GamePage } from '@/lib/api';
+import { n, t, type Locale } from '@/lib/i18n';
 
-type Props = { game: GamePage['game']; viewer: GamePage['viewer'] };
+type Props = { game: GamePage['game']; viewer: GamePage['viewer']; locale?: Locale };
 
-const nf = new Intl.NumberFormat('ar-EG');
-
-export function GameActions({ game, viewer }: Props) {
+export function GameActions({ game, viewer, locale = 'ar' }: Props) {
   const [vote, setVote] = useState<'like' | 'dislike' | null>(viewer.vote ?? null);
   const [likes, setLikes] = useState(game.likesCount);
   const [dislikes, setDislikes] = useState(game.dislikesCount);
@@ -90,7 +89,7 @@ export function GameActions({ game, viewer }: Props) {
     }
     const data = payload.data as { favorite?: boolean } | undefined;
     if (data && typeof data.favorite === 'boolean') setFavorite(data.favorite);
-    say(!previous ? 'أُضيفت إلى المفضلة ⭐' : 'أُزيلت من المفضلة');
+    say(!previous ? t(locale, 'game.favorited') : t(locale, 'game.unfavorited'));
   };
 
   const submitRating = async (stars: number) => {
@@ -105,7 +104,7 @@ export function GameActions({ game, viewer }: Props) {
       return;
     }
     setRating(stars);
-    say('شكرًا لتقييمك!');
+    say(t(locale, 'game.rateThanks'));
   };
 
   const share = async () => {
@@ -116,9 +115,9 @@ export function GameActions({ game, viewer }: Props) {
         return;
       }
       await navigator.clipboard.writeText(url);
-      say('نُسخ الرابط 📋');
+      say(t(locale, 'game.copied'));
     } catch {
-      say('تعذّرت المشاركة من هذا المتصفح.');
+      say(t(locale, 'game.shareFailed'));
     }
   };
 
@@ -128,16 +127,16 @@ export function GameActions({ game, viewer }: Props) {
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" onClick={() => void sendVote(1)} className={`btn ${vote === 'like' ? 'btn-primary' : 'btn-ghost'}`} aria-pressed={vote === 'like'}>
-          <span aria-hidden>👍</span> {nf.format(likes)}
+          <span aria-hidden>👍</span> {n(locale, likes)}
         </button>
         <button type="button" onClick={() => void sendVote(-1)} className={`btn ${vote === 'dislike' ? 'btn-primary' : 'btn-ghost'}`} aria-pressed={vote === 'dislike'}>
-          <span aria-hidden>👎</span> {nf.format(dislikes)}
+          <span aria-hidden>👎</span> {n(locale, dislikes)}
         </button>
         <button type="button" onClick={() => void toggleFavorite()} className={`btn ${favorite ? 'btn-primary' : 'btn-ghost'}`} aria-pressed={favorite}>
-          <span aria-hidden>{favorite ? '⭐' : '☆'}</span> {favorite ? 'في المفضلة' : 'أضف للمفضلة'}
+          <span aria-hidden>{favorite ? '⭐' : '☆'}</span> {favorite ? t(locale, 'game.inFavorites') : t(locale, 'game.addFavorite')}
         </button>
         <button type="button" onClick={() => void share()} className="btn btn-ghost">
-          <span aria-hidden>🔗</span> مشاركة
+          <span aria-hidden>🔗</span> {t(locale, 'game.share')}
         </button>
       </div>
 
@@ -149,19 +148,19 @@ export function GameActions({ game, viewer }: Props) {
 
       <div className="card p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-black text-ink">تقييمك</h2>
+          <h2 className="text-sm font-black text-ink">{t(locale, 'game.yourRating')}</h2>
           <span className="text-xs text-muted">
-            {game.ratingCount > 0 ? `${nf.format(game.ratingCount)} تقييم · متوسط ${game.ratingAvg?.toFixed(1) ?? '—'} من ٥` : 'كن أول من يقيّم'}
+            {game.ratingCount > 0 ? t(locale, 'game.ratingSummary', { count: n(locale, game.ratingCount), avg: game.ratingAvg?.toFixed(1) ?? '—' }) : t(locale, 'game.beFirst')}
           </span>
         </div>
-        <div className="mb-3 flex items-center gap-1" role="radiogroup" aria-label="التقييم بالنجوم">
+        <div className="mb-3 flex items-center gap-1" role="radiogroup" aria-label={t(locale, 'game.starsAria')}>
           {[1, 2, 3, 4, 5].map((value) => (
             <button
               key={value}
               type="button"
               role="radio"
               aria-checked={stars === value}
-              aria-label={`${value} من ٥`}
+              aria-label={t(locale, 'game.starsValueAria', { value })}
               onMouseEnter={() => setHoverStars(value)}
               onMouseLeave={() => setHoverStars(0)}
               onClick={() => void submitRating(value)}
@@ -171,17 +170,17 @@ export function GameActions({ game, viewer }: Props) {
               ★
             </button>
           ))}
-          {stars > 0 ? <span className="ms-2 text-xs font-bold text-muted">تقييمك: {stars} / ٥</span> : null}
+          {stars > 0 ? <span className="ms-2 text-xs font-bold text-muted">{t(locale, 'game.yourStars', { stars })}</span> : null}
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
           <input
             value={review}
             onChange={(event) => setReview(event.target.value.slice(0, 500))}
-            placeholder="اكتب مراجعة قصيرة (اختياري)"
+            placeholder={t(locale, 'game.reviewPlaceholder')}
             className="flex-1 rounded-xl border border-line bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-brand focus:bg-surface"
           />
           <button type="button" onClick={() => void submitRating(Math.max(1, stars))} disabled={busy || stars === 0} className="btn btn-primary">
-            {busy ? '…' : 'حفظ التقييم'}
+            {busy ? '…' : t(locale, 'game.saveRating')}
           </button>
         </div>
       </div>

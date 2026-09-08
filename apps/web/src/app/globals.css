@@ -253,15 +253,38 @@
     line-height: 2;
     font-size: 1.02rem;
   }
+  because a global
+     element selector here would fight every component in the app. */
+  .prose-en {
+    color: var(--text);
+    line-height: 2;
+    font-size: 1.02rem;
+  }
   .prose-ar h1, .prose-ar h2, .prose-ar h3 { margin: 1.6rem 0 0.7rem; line-height: 1.5; }
+  .prose-en h1, .prose-en h2, .prose-en h3 { margin: 1.6rem 0 0.7rem; line-height: 1.5; }
   .prose-ar h2 { font-size: 1.35rem; }
+  .prose-en h2 { font-size: 1.35rem; }
   .prose-ar h3 { font-size: 1.15rem; }
+  .prose-en h3 { font-size: 1.15rem; }
   .prose-ar p { margin: 0.85rem 0; }
+  .prose-en p { margin: 0.85rem 0; }
   .prose-ar ul, .prose-ar ol { margin: 0.85rem 1.4rem; display: flex; flex-direction: column; gap: 0.35rem; }
+  .prose-en ul, .prose-en ol { margin: 0.85rem 1.4rem; display: flex; flex-direction: column; gap: 0.35rem; }
   .prose-ar ul { list-style: disc; }
+  .prose-en ul { list-style: disc; }
   .prose-ar ol { list-style: decimal; }
+  .prose-en ol { list-style: decimal; }
   .prose-ar a { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; }
+  .prose-en a { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; }
   .prose-ar code {
+    background: var(--surface-3);
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.4rem;
+    font-size: 0.88em;
+    direction: ltr;
+    display: inline-block;
+  }
+  .prose-en code {
     background: var(--surface-3);
     padding: 0.15rem 0.4rem;
     border-radius: 0.4rem;
@@ -278,16 +301,35 @@
     direction: ltr;
     text-align: left;
   }
+  .prose-en pre {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    padding: 0.9rem;
+    border-radius: 0.8rem;
+    overflow-x: auto;
+    direction: ltr;
+    text-align: left;
+  }
   .prose-ar blockquote {
     border-inline-start: 3px solid var(--brand);
     padding-inline-start: 0.9rem;
     color: var(--text-muted);
     margin: 1rem 0;
   }
+  .prose-en blockquote {
+    border-inline-start: 3px solid var(--brand);
+    padding-inline-start: 0.9rem;
+    color: var(--text-muted);
+    margin: 1rem 0;
+  }
   .prose-ar img { border-radius: 0.9rem; margin: 1rem 0; }
+  .prose-en img { border-radius: 0.9rem; margin: 1rem 0; }
   .prose-ar hr { border: 0; border-top: 1px solid var(--border); margin: 1.6rem 0; }
+  .prose-en hr { border: 0; border-top: 1px solid var(--border); margin: 1.6rem 0; }
   .prose-ar table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  .prose-en table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
   .prose-ar th, .prose-ar td { border: 1px solid var(--border); padding: 0.5rem 0.7rem; text-align: start; }
+  .prose-en th, .prose-en td { border: 1px solid var(--border); padding: 0.5rem 0.7rem; text-align: start; }
 }
 
 @layer utilities {
@@ -310,3 +352,6 @@
     scroll-behavior: auto !important;
   }
 }
+
+  /* English prose rides the same rules; only the Arabic-tuned leading changes. */
+  .prose-en { line-height: 1.75; font-size: 1rem; }

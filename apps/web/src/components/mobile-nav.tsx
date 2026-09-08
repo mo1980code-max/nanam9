@@ -12,17 +12,18 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { Category } from '@/lib/api';
+import { l, n, pick, t, type Locale, type MessageKey } from '@/lib/i18n';
 
-type Props = { categories: Category[]; registrationEnabled: boolean };
+type Props = { locale: Locale; categories: Category[]; registrationEnabled: boolean };
 
-const LINKS = [
-  { href: '/', label: 'الرئيسية', icon: '🏠' },
-  { href: '/games', label: 'كل الألعاب', icon: '🎮' },
-  { href: '/blog', label: 'المدونة', icon: '📝' },
-  { href: '/search', label: 'البحث', icon: '🔎' },
+const LINKS: { path: string; label: MessageKey; icon: string }[] = [
+  { path: '/', label: 'nav.home', icon: '🏠' },
+  { path: '/games', label: 'nav.allGames', icon: '🎮' },
+  { path: '/blog', label: 'nav.blog', icon: '📝' },
+  { path: '/search', label: 'nav.search', icon: '🔎' },
 ];
 
-export function MobileNav({ categories, registrationEnabled }: Props) {
+export function MobileNav({ locale, categories, registrationEnabled }: Props) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
@@ -46,65 +47,65 @@ export function MobileNav({ categories, registrationEnabled }: Props) {
         type="button"
         onClick={() => setOpen(true)}
         className="btn btn-ghost !px-3 lg:hidden"
-        aria-label="فتح القائمة"
+        aria-label={t(locale, 'nav.openMenu')}
         aria-expanded={open}
       >
         <span aria-hidden className="text-lg leading-none">☰</span>
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="القائمة">
-          <button type="button" aria-label="إغلاق" className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)} />
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label={t(locale, 'nav.menu')}>
+          <button type="button" aria-label={t(locale, 'nav.close')} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)} />
           <nav className="absolute inset-y-0 start-0 flex w-[86%] max-w-sm flex-col overflow-y-auto border-e border-line bg-bg p-4 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
-              <span className="text-lg font-black text-ink">القائمة</span>
-              <button type="button" onClick={() => setOpen(false)} className="btn btn-ghost !px-3" aria-label="إغلاق القائمة">
+              <span className="text-lg font-black text-ink">{t(locale, 'nav.menu')}</span>
+              <button type="button" onClick={() => setOpen(false)} className="btn btn-ghost !px-3" aria-label={t(locale, 'nav.closeMenu')}>
                 <span aria-hidden>✕</span>
               </button>
             </div>
 
             <ul className="mb-5 grid gap-1">
               {LINKS.map((link) => (
-                <li key={link.href}>
+                <li key={link.path}>
                   <Link
-                    href={link.href}
+                    href={l(locale, link.path)}
                     className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold transition-colors ${
-                      pathname === link.href ? 'bg-brand-soft text-brand' : 'text-ink hover:bg-surface-2'
+                      pathname === l(locale, link.path) ? 'bg-brand-soft text-brand' : 'text-ink hover:bg-surface-2'
                     }`}
                   >
                     <span aria-hidden>{link.icon}</span>
-                    {link.label}
+                    {t(locale, link.label)}
                   </Link>
                 </li>
               ))}
             </ul>
 
-            <p className="mb-2 px-1 text-xs font-black text-muted">التصنيفات</p>
+            <p className="mb-2 px-1 text-xs font-black text-muted">{t(locale, 'nav.categories')}</p>
             <ul className="grid gap-1">
               {categories.map((category) => (
                 <li key={category.id}>
                   <Link
-                    href={category.url || `/category/${category.slug}`}
+                    href={category.url ? l(locale, category.url) : l(locale, `/category/${category.slug}`)}
                     className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-ink transition-colors hover:bg-surface-2"
                   >
                     <span
                       aria-hidden
-                      className="grid h-8 w-8 place-items-center rounded-lg text-base"
+                      className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-base"
                       style={{ backgroundColor: `${category.color ?? '#7c3aed'}22` }}
                     >
                       {category.icon ?? '🎮'}
                     </span>
-                    <span className="flex-1 truncate">{category.name}</span>
-                    <span className="text-xs text-muted">{category.gamesCount}</span>
+                    <span className="flex-1 truncate">{pick(locale, category.name, category.nameEn)}</span>
+                    <span className="text-xs text-muted">{n(locale, category.gamesCount)}</span>
                   </Link>
                 </li>
               ))}
             </ul>
 
             <div className="mt-auto grid gap-2 pt-6">
-              <Link href="/login" className="btn btn-primary">دخول</Link>
+              <Link href={l(locale, '/login')} className="btn btn-primary">{t(locale, 'nav.login')}</Link>
               {registrationEnabled && (
-                <Link href="/login" className="btn btn-ghost">الدخول بحساب جوجل</Link>
+                <Link href={l(locale, '/login')} className="btn btn-ghost">{t(locale, 'mobile.googleLogin')}</Link>
               )}
             </div>
           </nav>

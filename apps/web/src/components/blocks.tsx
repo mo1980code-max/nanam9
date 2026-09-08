@@ -7,7 +7,8 @@
  * case renders nothing instead of throwing.
  *
  * Blocks are *data*: an editor rearranging the "About us" page is publishing, not
- * deploying. That is the feature the fixed-template competitors do not have.
+ * deploying. CMS pages carry `titleEn` and per-block text; chrome strings and links
+ * here are locale-aware like everywhere else on the portal.
  */
 
 import Link from 'next/link';
@@ -16,6 +17,7 @@ import { GameGrid } from '@/components/game-card';
 import { Rail } from '@/components/rail';
 import { GameCard } from '@/components/game-card';
 import { getCategories, getLeaderboard, getTags, listGames, mediaUrl, type PageBlock } from '@/lib/api';
+import { l, n, pick, t, type Locale } from '@/lib/i18n';
 
 const str = (props: Record<string, unknown>, key: string): string => String(props[key] ?? '');
 const num = (props: Record<string, unknown>, key: string, fallback: number): number => {
@@ -23,7 +25,7 @@ const num = (props: Record<string, unknown>, key: string, fallback: number): num
   return Number.isFinite(value) && value > 0 ? value : fallback;
 };
 
-async function Block({ block }: { block: PageBlock }) {
+async function Block({ block, locale }: { block: PageBlock; locale: Locale }) {
   const props = block.props ?? {};
 
   switch (block.type) {
@@ -34,12 +36,12 @@ async function Block({ block }: { block: PageBlock }) {
           {str(props, 'subtitle') ? <p className="mb-6 max-w-2xl text-base leading-8 text-muted sm:text-lg">{str(props, 'subtitle')}</p> : null}
           <div className="flex flex-wrap gap-2.5">
             {str(props, 'ctaText') ? (
-              <Link href={str(props, 'ctaUrl') || '/games'} className="btn btn-primary">
+              <Link href={l(locale, str(props, 'ctaUrl') || '/games')} className="btn btn-primary">
                 {str(props, 'ctaText')}
               </Link>
             ) : null}
             {str(props, 'secondaryText') ? (
-              <Link href={str(props, 'secondaryUrl') || '/blog'} className="btn btn-ghost">
+              <Link href={l(locale, str(props, 'secondaryUrl') || '/blog')} className="btn btn-ghost">
                 {str(props, 'secondaryText')}
               </Link>
             ) : null}
@@ -49,7 +51,7 @@ async function Block({ block }: { block: PageBlock }) {
 
     case 'rich_text':
     case 'text':
-      return <Markdown source={str(props, 'markdown') || str(props, 'text')} />;
+      return <Markdown source={str(props, 'markdown') || str(props, 'text')} locale={locale} />;
 
     case 'stat_row': {
       const stats = Array.isArray(props.stats) ? (props.stats as { label?: unknown; value?: unknown }[]) : [];
@@ -92,7 +94,7 @@ async function Block({ block }: { block: PageBlock }) {
             {str(props, 'subtitle') ? <p className="mt-1 text-sm text-muted">{str(props, 'subtitle')}</p> : null}
           </div>
           {str(props, 'text') || str(props, 'ctaText') ? (
-            <Link href={str(props, 'url') || '/games'} className="btn btn-primary shrink-0">
+            <Link href={l(locale, str(props, 'url') || '/games')} className="btn btn-primary shrink-0">
               {str(props, 'text') || str(props, 'ctaText')}
             </Link>
           ) : null}
@@ -121,7 +123,7 @@ async function Block({ block }: { block: PageBlock }) {
 
     case 'banner':
       return (
-        <Link href={str(props, 'url') || '#'} className="block overflow-hidden rounded-2xl border border-line bg-gradient-to-r from-brand-soft to-accent-soft p-6 text-center transition-transform hover:-translate-y-0.5">
+        <Link href={str(props, 'url') ? l(locale, str(props, 'url')) : '#'} className="block overflow-hidden rounded-2xl border border-line bg-gradient-to-r from-brand-soft to-accent-soft p-6 text-center transition-transform hover:-translate-y-0.5">
           <p className="text-lg font-black text-ink">{str(props, 'title') || str(props, 'text')}</p>
           {str(props, 'subtitle') ? <p className="mt-1 text-sm text-muted">{str(props, 'subtitle')}</p> : null}
         </Link>
@@ -133,13 +135,13 @@ async function Block({ block }: { block: PageBlock }) {
       return (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {categories.map((category) => (
-            <Link key={category.id} href={category.url || `/category/${category.slug}`} className="card flex items-center gap-3 p-3.5 transition-all hover:-translate-y-0.5 hover:border-brand">
+            <Link key={category.id} href={category.url ? l(locale, category.url) : l(locale, `/category/${category.slug}`)} className="card flex items-center gap-3 p-3.5 transition-all hover:-translate-y-0.5 hover:border-brand">
               <span aria-hidden className="grid h-10 w-10 place-items-center rounded-xl text-lg" style={{ backgroundColor: `${category.color ?? '#7c3aed'}1f` }}>
                 {category.icon ?? '🎮'}
               </span>
               <span className="min-w-0">
-                <span className="block truncate text-sm font-bold text-ink">{category.name}</span>
-                <span className="block text-[11px] text-muted">{category.gamesCount} لعبة</span>
+                <span className="block truncate text-sm font-bold text-ink">{pick(locale, category.name, category.nameEn)}</span>
+                <span className="block text-[11px] text-muted">{n(locale, category.gamesCount)} {t(locale, 'unit.games')}</span>
               </span>
             </Link>
           ))}
@@ -153,7 +155,7 @@ async function Block({ block }: { block: PageBlock }) {
       return (
         <div className="flex flex-wrap gap-2">
           {tags.map((tag) => (
-            <Link key={tag.slug} href={`/games?tag=${encodeURIComponent(tag.slug)}`} className="chip">
+            <Link key={tag.slug} href={l(locale, `/games?tag=${encodeURIComponent(tag.slug)}`)} className="chip">
               <span aria-hidden>#</span>
               {tag.name}
             </Link>
@@ -168,10 +170,10 @@ async function Block({ block }: { block: PageBlock }) {
       return (
         <div className="card divide-y divide-[var(--border)] overflow-hidden">
           {rows.map((row) => (
-            <Link key={row.username} href={row.url || `/u/${row.username}`} className="flex items-center gap-3 px-4 py-3 hover:bg-surface-2">
-              <span className="w-6 text-center text-sm font-black text-muted">{row.rank.toLocaleString('ar-EG')}</span>
+            <Link key={row.username} href={row.url ? l(locale, row.url) : l(locale, `/u/${row.username}`)} className="flex items-center gap-3 px-4 py-3 hover:bg-surface-2">
+              <span className="w-6 text-center text-sm font-black text-muted">{n(locale, row.rank)}</span>
               <span className="min-w-0 flex-1 truncate text-sm font-bold text-ink">{row.displayName ?? row.username}</span>
-              <span className="rounded-full bg-brand-soft px-2.5 py-1 text-[11px] font-black text-brand">{row.xp.toLocaleString('ar-EG')} نقطة</span>
+              <span className="rounded-full bg-brand-soft px-2.5 py-1 text-[11px] font-black text-brand">{n(locale, row.xp)} {t(locale, 'unit.points')}</span>
             </Link>
           ))}
         </div>
@@ -190,16 +192,16 @@ async function Block({ block }: { block: PageBlock }) {
       if (!items.length) return null;
       if (block.type === 'carousel') {
         return (
-          <Rail label={str(props, 'title') || 'ألعاب'}>
+          <Rail label={str(props, 'title') || t(locale, 'sections.gamesFallback')} locale={locale}>
             {items.map((game) => (
               <li key={game.id} role="listitem">
-                <GameCard game={game} />
+                <GameCard game={game} locale={locale} />
               </li>
             ))}
           </Rail>
         );
       }
-      return <GameGrid games={items} />;
+      return <GameGrid games={items} locale={locale} />;
     }
 
     default:
@@ -207,12 +209,12 @@ async function Block({ block }: { block: PageBlock }) {
   }
 }
 
-export function Blocks({ blocks }: { blocks: PageBlock[] }) {
+export function Blocks({ blocks, locale }: { blocks: PageBlock[]; locale: Locale }) {
   if (!blocks?.length) return null;
   return (
     <div className="grid gap-8">
       {blocks.map((block) => (
-        <Block key={block.id} block={block} />
+        <Block key={block.id} block={block} locale={locale} />
       ))}
     </div>
   );

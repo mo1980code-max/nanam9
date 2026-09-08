@@ -17,15 +17,17 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { mediaUrl, type GameCard } from '@/lib/api';
+import { l, n, pick, t, type Locale } from '@/lib/i18n';
 
 type Props = {
+  locale: Locale;
   variant?: 'bar' | 'page';
   /** Prefills the box (the /search page mirrors the ?q= parameter into it). */
   initialValue?: string;
   autoFocus?: boolean;
 };
 
-export function SearchBox({ variant = 'bar', initialValue = '', autoFocus = false }: Props) {
+export function SearchBox({ locale, variant = 'bar', initialValue = '', autoFocus = false }: Props) {
   const router = useRouter();
   const [term, setTerm] = useState(initialValue);
   const [results, setResults] = useState<GameCard[]>([]);
@@ -84,7 +86,7 @@ export function SearchBox({ variant = 'bar', initialValue = '', autoFocus = fals
     const query = term.trim();
     if (!query) return;
     setOpen(false);
-    router.push(`/search?q=${encodeURIComponent(query)}`);
+    router.push(l(locale, `/search?q=${encodeURIComponent(query)}`));
   };
 
   const wide = variant === 'page';
@@ -101,8 +103,8 @@ export function SearchBox({ variant = 'bar', initialValue = '', autoFocus = fals
           value={term}
           onChange={(event) => setTerm(event.target.value)}
           onFocus={() => results.length > 0 && setOpen(true)}
-          placeholder="ابحث عن لعبة…"
-          aria-label="ابحث عن لعبة"
+          placeholder={t(locale, 'search.placeholder')}
+          aria-label={t(locale, 'search.aria')}
           autoComplete="off"
           className={`w-full rounded-full border border-line bg-surface-2 ps-10 pe-4 text-ink placeholder:text-muted transition-colors focus:border-brand focus:bg-surface ${
             wide ? 'py-3.5 text-base' : 'py-2.5 text-sm'
@@ -119,14 +121,15 @@ export function SearchBox({ variant = 'bar', initialValue = '', autoFocus = fals
         <div className="absolute z-40 mt-2 w-full overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl">
           {results.length === 0 ? (
             <p className="px-4 py-5 text-sm text-muted">
-              لا نتائج لـ «{term.trim()}». جرّب اسمًا أقصر أو تصفّح <Link className="text-brand" href="/games">كل الألعاب</Link>.
+              {t(locale, 'search.noResultsFor', { term: term.trim() })}{' '}
+              <Link className="text-brand" href={l(locale, '/games')}>{t(locale, 'search.allGames')}</Link>.
             </p>
           ) : (
             <ul>
               {results.map((game) => (
                 <li key={game.id}>
                   <Link
-                    href={`/game/${game.slug}`}
+                    href={l(locale, `/game/${game.slug}`)}
                     onClick={() => setOpen(false)}
                     className="flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-surface-2"
                   >
@@ -140,9 +143,9 @@ export function SearchBox({ variant = 'bar', initialValue = '', autoFocus = fals
                       loading="lazy"
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-bold text-ink">{game.title}</span>
+                      <span className="block truncate text-sm font-bold text-ink">{pick(locale, game.title, game.titleEn)}</span>
                       <span className="block truncate text-xs text-muted">
-                        {game.categories?.[0]?.name ?? 'ألعاب'} · ▶ {game.plays.toLocaleString('ar-EG')}
+                        {game.categories?.[0] ? pick(locale, game.categories[0].name, game.categories[0].nameEn) : t(locale, 'sections.gamesFallback')} · ▶ {n(locale, game.plays)}
                       </span>
                     </span>
                   </Link>
@@ -151,11 +154,11 @@ export function SearchBox({ variant = 'bar', initialValue = '', autoFocus = fals
             </ul>
           )}
           <Link
-            href={`/search?q=${encodeURIComponent(term.trim())}`}
+            href={l(locale, `/search?q=${encodeURIComponent(term.trim())}`)}
             onClick={() => setOpen(false)}
             className="block border-t border-line bg-surface-2 px-4 py-2.5 text-center text-xs font-bold text-brand"
           >
-            عرض كل النتائج ←
+            {t(locale, 'search.viewAll')}
           </Link>
         </div>
       )}

@@ -10,8 +10,9 @@
  */
 
 import { useRef, type ReactNode } from 'react';
+import { t, type Locale } from '@/lib/i18n';
 
-export function Rail({ children, label }: { children: ReactNode; label: string }) {
+export function Rail({ children, label, locale = 'ar' }: { children: ReactNode; label: string; locale?: Locale }) {
   const ref = useRef<HTMLDivElement>(null);
 
   const scrollBy = (direction: 1 | -1) => {
@@ -35,10 +36,10 @@ export function Rail({ children, label }: { children: ReactNode; label: string }
         {children}
       </div>
       <div className="mt-1 flex justify-end gap-2">
-        <button type="button" onClick={() => scrollBy(-1)} className="btn btn-ghost !px-3 !py-1.5" aria-label={`السابق في ${label}`}>
+        <button type="button" onClick={() => scrollBy(-1)} className="btn btn-ghost !px-3 !py-1.5" aria-label={t(locale, 'rail.prevIn', { label })}>
           <span aria-hidden>→</span>
         </button>
-        <button type="button" onClick={() => scrollBy(1)} className="btn btn-ghost !px-3 !py-1.5" aria-label={`التالي في ${label}`}>
+        <button type="button" onClick={() => scrollBy(1)} className="btn btn-ghost !px-3 !py-1.5" aria-label={t(locale, 'rail.nextIn', { label })}>
           <span aria-hidden>←</span>
         </button>
       </div>
