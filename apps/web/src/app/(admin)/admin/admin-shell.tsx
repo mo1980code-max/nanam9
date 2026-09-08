@@ -26,6 +26,8 @@ const NAV: { href: string; label: string; icon: string; exact: boolean }[] = [
   { href: '/admin/games', label: 'إدارة الألعاب', icon: '🎮', exact: false },
   { href: '/admin/taxonomy', label: 'التصنيفات والوسوم', icon: '🗂️', exact: false },
   { href: '/admin/blog', label: 'إدارة المدونة', icon: '📝', exact: false },
+  { href: '/admin/users', label: 'المستخدمون', icon: '👥', exact: false },
+  { href: '/admin/reports', label: 'البلاغات', icon: '🚩', exact: false },
   { href: '/admin/sections', label: 'بانئ الأقسام', icon: '🧩', exact: false },
   { href: '/admin/activity', label: 'سجل النشاط', icon: '📜', exact: false },
 ];
