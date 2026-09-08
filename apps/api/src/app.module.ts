@@ -28,6 +28,7 @@ import { SiteModule } from './modules/site/site.module.js';
 import { SocialModule } from './modules/social/social.module.js';
 import { UsersModule } from './modules/users/users.module.js';
 import { CmsModule } from './modules/cms/cms.module.js';
+import { CommerceModule } from './modules/commerce/commerce.module.js';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { CmsModule } from './modules/cms/cms.module.js';
     // Content comes after users: a post's author is a user, and the blog listing
     // renders that author's display name and avatar.
     CmsModule,
+    CommerceModule,
   ],
 })
 export class AppModule implements NestModule {

@@ -28,6 +28,7 @@ const NAV: { href: string; label: string; icon: string; exact: boolean }[] = [
   { href: '/admin/blog', label: 'إدارة المدونة', icon: '📝', exact: false },
   { href: '/admin/users', label: 'المستخدمون', icon: '👥', exact: false },
   { href: '/admin/reports', label: 'البلاغات', icon: '🚩', exact: false },
+  { href: '/admin/ads', label: 'إدارة الإعلانات', icon: '📢', exact: false },
   { href: '/admin/sections', label: 'بانئ الأقسام', icon: '🧩', exact: false },
   { href: '/admin/activity', label: 'سجل النشاط', icon: '📜', exact: false },
 ];
