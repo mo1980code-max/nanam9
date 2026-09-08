@@ -101,7 +101,11 @@ export type PostCard = {
   id: string;
   slug: string;
   title: string;
+  /** English edition; null when the post was never translated — the web falls back to `title`. */
+  titleEn: string | null;
   excerpt: string | null;
+  /** English excerpt, same fallback rule as titleEn. */
+  excerptEn: string | null;
   coverImage: string | null;
   url: string;
   author: AuthorRef | null;
@@ -123,6 +127,7 @@ export type PostCard = {
 
 export type PostView = PostCard & {
   body: string;
+  bodyEn: string | null;
   tags: TermRef[];
   seo: { title: string | null; description: string | null; canonical: string | null; robots: string };
   jsonLd: Record<string, unknown>[];
@@ -356,8 +361,11 @@ export class CmsService {
     const created = await this.db.content.createPost({
       slug,
       title: dto.title.trim(),
+      titleEn: dto.titleEn?.trim() || null,
       excerpt: dto.excerpt?.trim() || plainExcerpt(dto.body, 170) || null,
+      excerptEn: dto.excerptEn?.trim() || (dto.bodyEn ? plainExcerpt(dto.bodyEn, 170) : null),
       body: dto.body,
+      bodyEn: dto.bodyEn || null,
       coverImage: safeUrlValue(dto.coverImage, 'post.coverImage'),
       authorId: actor.id,
       categoryId: category?.id ?? null,
@@ -403,13 +411,19 @@ export class CmsService {
     const patch: Partial<BlogPostRow> = {
       slug,
       title: dto.title?.trim() ?? existing.title,
+      titleEn: dto.titleEn !== undefined ? dto.titleEn.trim() || null : existing.titleEn ?? null,
       body,
+      bodyEn: dto.bodyEn !== undefined ? dto.bodyEn || null : existing.bodyEn ?? null,
       status: nextStatus,
       publishedAt,
       categoryId: category,
       readingMinutes: readingMinutes(body),
     };
     if (dto.excerpt !== undefined) patch.excerpt = dto.excerpt.trim() || plainExcerpt(body, 170) || null;
+    if (dto.excerptEn !== undefined) {
+      const bodyEn = dto.bodyEn !== undefined ? dto.bodyEn : (patch.bodyEn ?? existing.bodyEn ?? '');
+      patch.excerptEn = dto.excerptEn.trim() || (bodyEn ? plainExcerpt(bodyEn, 170) : null);
+    }
     if (dto.coverImage !== undefined) patch.coverImage = safeUrlValue(dto.coverImage, 'post.coverImage');
     if (dto.seoTitle !== undefined) patch.seoTitle = dto.seoTitle.trim() || null;
     if (dto.seoDescription !== undefined) patch.seoDescription = dto.seoDescription.trim() || null;
@@ -709,6 +723,7 @@ export class CmsService {
     return {
       ...card,
       body: row.body,
+      bodyEn: row.bodyEn ?? null,
       tags: (row.tags ?? []).map(({ slug, name }) => ({ slug, name })),
       seo: {
         title: row.seoTitle ?? row.title,
@@ -727,7 +742,9 @@ export class CmsService {
       id: row.id,
       slug: row.slug,
       title: row.title,
+      titleEn: row.titleEn ?? null,
       excerpt: row.excerpt,
+      excerptEn: row.excerptEn ?? null,
       coverImage: row.coverImage,
       url: postPath(row.slug),
       author: row.author ? { username: row.author.username, displayName: row.author.displayName, avatarUrl: row.author.avatarUrl } : null,

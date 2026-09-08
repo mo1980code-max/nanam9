@@ -13,7 +13,7 @@ import { notFound } from 'next/navigation';
 import { Breadcrumbs } from '@/components/breadcrumbs';
 import { Markdown } from '@/components/markdown';
 import { getPost, mediaUrl, siteUrl } from '@/lib/api';
-import { dateLocale, isLocale, l, localeAlternates, n, t, type Locale } from '@/lib/i18n';
+import { dateLocale, isLocale, l, localeAlternates, n, pick, t, type Locale } from '@/lib/i18n';
 
 export const revalidate = 60;
 
@@ -25,8 +25,9 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   const post = await getPost(slug);
   if (!post) return { title: t(locale, 'blog.notFound') };
 
-  const title = post.seo?.title || post.title;
-  const description = post.seo?.description || post.excerpt || undefined;
+  const displayTitle = pick(locale, post.title, post.titleEn);
+  const title = post.seo?.title || displayTitle;
+  const description = post.seo?.description || pick(locale, post.excerpt, post.excerptEn) || undefined;
   const image = mediaUrl(post.coverImage) ?? undefined;
   const noIndex = /noindex/i.test(post.seo?.robots ?? '');
 
@@ -58,12 +59,13 @@ export default async function BlogPostPage({ params }: { params: Promise<Params>
   const post = await getPost(slug);
   if (!post) notFound();
 
+  const displayTitle = pick(locale, post.title, post.titleEn);
   const cover = mediaUrl(post.coverImage);
   const trail = [
     { name: t(locale, 'crumbs.home'), url: '/' },
     { name: t(locale, 'blog.title'), url: '/blog' },
     ...(post.category ? [{ name: post.category.name, url: `/blog?category=${encodeURIComponent(post.category.slug)}` }] : []),
-    { name: post.title, url: `/blog/${post.slug}` },
+    { name: displayTitle, url: `/blog/${post.slug}` },
   ];
 
   return (
@@ -78,7 +80,7 @@ export default async function BlogPostPage({ params }: { params: Promise<Params>
         {cover ? (
           <div className="aspect-[16/9] w-full overflow-hidden bg-surface-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={cover} alt={post.title} className="h-full w-full object-cover" fetchPriority="high" />
+            <img src={cover} alt={displayTitle} className="h-full w-full object-cover" fetchPriority="high" />
           </div>
         ) : null}
 
@@ -88,7 +90,7 @@ export default async function BlogPostPage({ params }: { params: Promise<Params>
               {post.category.name}
             </Link>
           ) : null}
-          <h1 className="mb-3 text-2xl font-black leading-snug text-ink sm:text-4xl">{post.title}</h1>
+          <h1 className="mb-3 text-2xl font-black leading-snug text-ink sm:text-4xl">{displayTitle}</h1>
           <p className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
             <span className="font-bold text-ink">{post.author?.displayName ?? post.author?.username ?? t(locale, 'blog.editorial')}</span>
             {post.publishedAt ? (
@@ -101,10 +103,10 @@ export default async function BlogPostPage({ params }: { params: Promise<Params>
           </p>
 
           {post.excerpt ? (
-            <p className="mb-6 rounded-2xl border-s-4 border-brand bg-brand-soft p-4 text-sm leading-8 text-ink">{post.excerpt}</p>
+            <p className="mb-6 rounded-2xl border-s-4 border-brand bg-brand-soft p-4 text-sm leading-8 text-ink">{pick(locale, post.excerpt, post.excerptEn)}</p>
           ) : null}
 
-          <Markdown source={post.body ?? ''} locale={locale} />
+          <Markdown source={pick(locale, post.body, post.bodyEn) ?? ''} locale={locale} />
 
           {post.tags?.length ? (
             <div className="mt-8 flex flex-wrap gap-1.5 border-t border-[var(--border)] pt-5">

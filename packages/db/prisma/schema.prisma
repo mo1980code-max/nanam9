@@ -1126,10 +1126,16 @@ model BlogPost {
   id             String        @id @default(cuid()) @db.VarChar(30)
   slug           String        @unique @db.VarChar(200)
   title          String        @db.VarChar(200)
+  titleEn        String?       @map("title_en") @db.VarChar(200)
   excerpt        String?       @db.VarChar(500)
+  excerptEn      String?       @map("excerpt_en") @db.VarChar(500)
   /// Markdown as authored; the renderer lives in the web app (no HTML stored
   /// from an editor = no stored XSS surface).
   body           String
+  /// English edition of the same post, also Markdown. Optional: the web app
+  /// falls back to the Arabic body when absent, so translating is never a
+  /// blocker for publishing.
+  bodyEn         String?       @map("body_en")
   coverImage     String?       @map("cover_image") @db.VarChar(500)
   authorId       String        @map("author_id") @db.VarChar(30)
   categoryId     String?       @map("category_id") @db.VarChar(30)

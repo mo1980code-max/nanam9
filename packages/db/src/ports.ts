@@ -358,8 +358,11 @@ export type BlogPostRow = {
   id: ID;
   slug: string;
   title: string;
+  titleEn: string | null;
   excerpt: string | null;
+  excerptEn: string | null;
   body: string;
+  bodyEn: string | null;
   coverImage: string | null;
   authorId: ID;
   categoryId: ID | null;

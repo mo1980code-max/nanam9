@@ -12,7 +12,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Pagination } from '@/components/pagination';
 import { getBlogCategories, listPosts, mediaUrl, siteUrl } from '@/lib/api';
-import { dateLocale, isLocale, l, localeAlternates, n, t, type Locale } from '@/lib/i18n';
+import { dateLocale, isLocale, l, localeAlternates, n, pick, t, type Locale } from '@/lib/i18n';
 
 export const revalidate = 60;
 
@@ -109,7 +109,7 @@ export default async function BlogPage({
               </div>
               <div className="p-5 sm:p-6">
                 {lead.category?.name ? <p className="mb-2 text-[11px] font-black uppercase tracking-wider text-brand">{lead.category.name}</p> : null}
-                <h2 className="mb-2 text-xl font-black text-ink group-hover:text-brand sm:text-2xl">{lead.title}</h2>
+                <h2 className="mb-2 text-xl font-black text-ink group-hover:text-brand sm:text-2xl">{pick(locale, lead.title, lead.titleEn)}</h2>
                 {lead.excerpt ? <p className="mb-4 line-clamp-3 text-sm leading-8 text-muted">{lead.excerpt}</p> : null}
                 <p className="text-xs text-muted">
                   {lead.author?.displayName ?? lead.author?.username ?? t(locale, 'blog.editorial')}
@@ -134,8 +134,8 @@ export default async function BlogPage({
                   </div>
                   <div className="grid gap-2 p-4">
                     {post.category?.name ? <p className="text-[11px] font-black uppercase tracking-wider text-brand">{post.category.name}</p> : null}
-                    <h2 className="line-clamp-2 text-base font-bold leading-7 text-ink group-hover:text-brand">{post.title}</h2>
-                    <p className="line-clamp-2 text-sm leading-7 text-muted">{post.excerpt ?? ''}</p>
+                    <h2 className="line-clamp-2 text-base font-bold leading-7 text-ink group-hover:text-brand">{pick(locale, post.title, post.titleEn)}</h2>
+                    <p className="line-clamp-2 text-sm leading-7 text-muted">{pick(locale, post.excerpt, post.excerptEn) ?? ''}</p>
                     <p className="text-[11px] text-muted">
                       {post.publishedAt ? new Date(post.publishedAt).toLocaleDateString(dateLocale(locale)) : ''}
                       {post.readingMinutes ? ` • ${n(locale, post.readingMinutes)} ${t(locale, 'unit.minutesShort')}` : ''}

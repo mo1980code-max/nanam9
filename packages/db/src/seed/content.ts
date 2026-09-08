@@ -261,13 +261,15 @@ const COMMENTS: { game: string; author: number; ar: string; replies?: { author: 
   { game: 'neon-pong', author: 2, ar: 'يعمل على جوال قديم بدون أي تقطيع. هذا نادر في ألعاب HTML5.' },
 ];
 
-const BLOG_POSTS: { slug: string; title: string; category: string; tags: string[]; excerpt: string; body: string }[] = [
+const BLOG_POSTS: { slug: string; title: string; titleEn?: string; category: string; tags: string[]; excerpt: string; excerptEn?: string; body: string; bodyEn?: string }[] = [
   {
     slug: 'why-html5-games-win-in-2026',
     title: 'لماذا انتصرت ألعاب HTML5 في ٢٠٢٦',
+    titleEn: 'Why HTML5 Games Won in 2026',
     category: 'industry',
     tags: ['html5', 'web-games', 'performance'],
     excerpt: 'بدون تثبيت، بدون متجر، وبدون انتظار: كيف غيّرت ألعاب المتصفح اقتصاد التوزيع خلال خمس سنوات.',
+    excerptEn: 'No install, no store, no waiting: how browser games rewired the economics of distribution in five years.',
     body: `## اللعبة التي لا تحتاج تثبيتًا
 
 في ٢٠٢٠ كان على اللاعب أن يقنع نفسه: حمّل التطبيق، اقبل الأذونات، انتظر ٢٠٠ ميجابايت. اليوم يضغط رابطًا ويلعب خلال ثانيتين.
@@ -283,13 +285,30 @@ const BLOG_POSTS: { slug: string; title: string; category: string; tags: string[
 أن القيمة انتقلت من "من يملك اللعبة" إلى "من يملك الاكتشاف". اللعبة نفسها متاحة لعشرين بوابة؛ ما يميّز بوابتك هو التصنيف الذكي، وسرعة الصفحة، وثقة المستخدم في توصياتك.
 
 > الخلاصة: الأداء ميزة، وSEO ميزة، وتصميم صفحة اللعبة ميزة تنافسية — لا تجميل.`,
+    bodyEn: `## The game that needs no install
+
+In 2020 the player had to talk themselves into it: download the app, accept the permissions, wait for 200 MB. Today they tap a link and are playing within two seconds.
+
+### Three numbers that explain the shift
+
+1. **Time to play**: an HTML5 game loads in under three seconds on an average connection, versus 40 seconds for a native app of comparable size.
+2. **Distribution**: one link works on WhatsApp, Telegram, Twitter and a QR code on a sticker.
+3. **Monetization**: header-bidding auctions have lifted eCPM on embedded games by more than 30% in our markets.
+
+### What this means for a portal operator
+
+Value has moved from "who owns the game" to "who owns discovery". The same game is available to twenty portals; what sets yours apart is smart categorization, page speed, and the user's trust in your recommendations.
+
+> The bottom line: performance is a feature, SEO is a feature, and game-page design is a competitive advantage — not decoration.`,
   },
   {
     slug: 'core-web-vitals-for-game-portals',
     title: 'مقاييس Core Web Vitals لبوابات الألعاب: دليل عملي',
+    titleEn: 'Core Web Vitals for Game Portals: A Practical Guide',
     category: 'technical',
     tags: ['seo', 'performance', 'nextjs'],
     excerpt: 'LCP وCLS وINP في صفحة لعبة: ما الذي يكسرها فعلًا، وكيف أصلحناه في Voltade.',
+    excerptEn: 'LCP, CLS and INP on a game page: what actually breaks them, and how we fixed each one in Voltade.',
     body: `## LCP: الصورة المصغرة هي البطل
 
 أكبر عنصر يُرسم في صفحة اللعبة هو الصورة المصغرة أو الـ banner. إن كانت PNG بحجم ٤٠٠ ك.ب فـ LCP لن يقل عن ثانيتين على شبكة 4G.
@@ -303,13 +322,28 @@ const BLOG_POSTS: { slug: string; title: string; category: string; tags: string[
 ## INP: لا تحجب الخيط الرئيسي
 
 زر "العب الآن" يجب أن يستجيب فورًا. كل ما هو ثقيل — تسجيل اللعب، إرسال XP، تحميل التعليقات — يحدث بعد الاستجابة أو في worker.`,
+    bodyEn: `## LCP: the thumbnail is the hero
+
+The largest element painted on a game page is the thumbnail or the banner. If it is a 400 KB PNG, LCP will never drop below two seconds on 4G.
+
+**The fix**: automatic conversion to AVIF/WebP, \`fetchpriority="high"\` on the first game image only, and \`loading="lazy"\` for everything below the fold.
+
+## CLS: reserve the iframe's space
+
+The biggest cause of layout shifts is a dimension-less iframe. We give the container an \`aspect-ratio\` derived from the game's stored width/height, so nothing moves after the game loads.
+
+## INP: never block the main thread
+
+The "Play now" button must respond instantly. Everything heavy — play tracking, XP, loading comments — happens after the response or in a worker.`,
   },
   {
     slug: 'how-to-import-gamemonetize-feed',
     title: 'كيف تستورد تغذية GameMonetize دون تكرار لعبة واحدة',
+    titleEn: 'How to Import a GameMonetize Feed Without a Single Duplicate',
     category: 'guides',
     tags: ['providers', 'import', 'gamemonetize'],
     excerpt: 'دليل مشغّل البوابة: من مفتاح API إلى فحص ZIP، ولماذا hash المصدر هو خط الدفاع الأخير.',
+    excerptEn: "A portal operator's guide: from the API key to ZIP inspection, and why the source hash is the last line of defense.",
     body: `## المشكلة التي يعرفها كل مشغّل
 
 بعد أسبوعين من تشغيل الجلب التلقائي تكتشف أن "Speed Racer" موجودة ثلاث مرات: مرة من GameMonetize، ومرة من GameDistribution، ومرة رفعتها يدويًا.
@@ -323,13 +357,28 @@ const BLOG_POSTS: { slug: string; title: string; category: string; tags: string[
 ## الجدولة
 
 كل ساعة: جلب صفحة واحدة من التغذية. كل ليلة: إعادة فهرسة البحث وتجميع الإحصائيات. لا تُشغّل الجلب عند كل طلب — هذا ما يجعل الخادم يخنق نفسه.`,
+    bodyEn: `## The problem every operator knows
+
+Two weeks after enabling auto-fetch you discover "Speed Racer" exists three times: once from GameMonetize, once from GameDistribution, and once you uploaded it by hand.
+
+## The fix, in three layers
+
+1. **Source hash**: \`sha256(provider|provider_game_id|normalized_url|title)\` stored in a unique column. A duplicate insert fails in the database before it can fail in code.
+2. **Staging table**: everything the feed brings in lands in \`provider_items\` with status \`new\` first, then gets judged: \`imported\`, \`duplicate\` or \`rejected\`.
+3. **Package inspection**: a ZIP is unpacked into a temp folder and rejected if it has no \`index.html\`, exceeds the size cap, or contains a \`../\` path.
+
+## Scheduling
+
+Hourly: fetch one feed page. Nightly: re-index search and aggregate statistics. Never fetch on every request — that is how a server strangles itself.`,
   },
   {
     slug: 'rtl-first-game-portal-design',
     title: 'تصميم بوابة ألعاب RTL-أولًا: ما الذي يتغير فعلًا',
+    titleEn: 'Designing an RTL-First Game Portal: What Actually Changes',
     category: 'design',
     tags: ['rtl', 'arabic', 'ux'],
     excerpt: 'الاتجاه ليس ترجمة: الشبكات، الأيقونات، الأرقام، ومسار العين — قائمة مراجعة عملية.',
+    excerptEn: 'Direction is not translation: grids, icons, numerals and the scanning path — a practical checklist.',
     body: `## \`dir="rtl"\` ليست كافيًا
 
 المتصفح يعكس الاتجاه، لكن التصميم لا يُعكس تلقائيًا:
@@ -342,6 +391,18 @@ const BLOG_POSTS: { slug: string; title: string; category: string; tags: string[
 ## الخط
 
 نظام خطوط النظام (\`system-ui\`) يكفي للعناوين اللاتينية، لكن للعربية اختر خطًا واحدًا جيدًا (Cairo أو Tajawal) واربطه بـ \`font-display: swap\`.`,
+    bodyEn: `## \`dir="rtl"\` is not enough
+
+The browser flips the direction, but the design does not flip itself:
+
+- **Numerals**: keep scores and counters Latin (\`numberingSystem: 'latn'\`) and use Arabic-Indic digits in prose where the context calls for it.
+- **Directional icons**: the "next" arrow must flip; the clock or play icon must not.
+- **Grids**: use \`ms-*\`/\`me-*\` (margin-inline) instead of \`ml-*\`/\`mr-*\` so you never maintain two stylesheets.
+- **Scanning path**: in RTL the eye enters from the right; put the primary call to action (Play) on the right of the card, not the left.
+
+## Typography
+
+System fonts (\`system-ui\`) are fine for Latin headings, but for Arabic pick one good family (Cairo or Tajawal) and load it with \`font-display: swap\`.`,
   },
 ];
 
@@ -847,12 +908,27 @@ export async function seedDatabase(db: Database, options: SeedOptions = {}): Pro
   if (demo) {
     for (const [i, post] of BLOG_POSTS.entries()) {
       const existing = await db.content.findPostBySlug(post.slug);
-      if (existing) continue;
+      if (existing) {
+        // i18n backfill: posts seeded before the blog_posts_i18n migration have
+        // NULL English columns. Fill them once; never overwrite a translation a
+        // human has edited (any non-null value means "leave it alone").
+        if (!existing.titleEn && post.titleEn) {
+          await db.content.updatePost(existing.id, {
+            titleEn: post.titleEn,
+            excerptEn: post.excerptEn ?? null,
+            bodyEn: post.bodyEn ?? null,
+          });
+        }
+        continue;
+      }
       const created = await db.content.createPost({
         slug: post.slug,
         title: post.title,
+        titleEn: post.titleEn ?? null,
         excerpt: post.excerpt,
+        excerptEn: post.excerptEn ?? null,
         body: post.body,
+        bodyEn: post.bodyEn ?? null,
         authorId: staffIds[i % staffIds.length] ?? admin.id,
         categoryId: blogCategoryIds.get(post.category) ?? null,
         status: 'published',

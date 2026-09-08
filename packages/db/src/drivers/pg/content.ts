@@ -39,8 +39,11 @@ const PAGE_FIELDS = [
 const POST_FIELDS = [
   'slug',
   'title',
+  'titleEn',
   'excerpt',
+  'excerptEn',
   'body',
+  'bodyEn',
   'coverImage',
   'authorId',
   'categoryId',

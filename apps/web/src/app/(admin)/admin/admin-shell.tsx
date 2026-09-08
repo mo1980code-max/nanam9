@@ -21,8 +21,10 @@ type Me = {
   role: { slug: string; name: string } | null;
 };
 
-const NAV = [
+const NAV: { href: string; label: string; icon: string; exact: boolean }[] = [
   { href: '/admin', label: 'لوحة الإدارة', icon: '📊', exact: true },
+  { href: '/admin/games', label: 'إدارة الألعاب', icon: '🎮', exact: false },
+  { href: '/admin/blog', label: 'إدارة المدونة', icon: '📝', exact: false },
   { href: '/admin/sections', label: 'بانئ الأقسام', icon: '🧩', exact: false },
   { href: '/admin/activity', label: 'سجل النشاط', icon: '📜', exact: false },
 ];

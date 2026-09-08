@@ -130,11 +130,29 @@ export class CreatePostDto {
   @MaxLength(500)
   excerpt?: string;
 
+  @ApiPropertyOptional({ description: 'English title; the web app falls back to the Arabic one when absent' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  titleEn?: string;
+
+  @ApiPropertyOptional({ description: 'English card/SEO summary; derived from bodyEn when omitted' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  excerptEn?: string;
+
   @ApiProperty({ description: 'Markdown body — stored as written, rendered by the web app' })
   @IsString()
   @MinLength(1)
   @MaxLength(200_000)
   body!: string;
+
+  @ApiPropertyOptional({ description: 'English Markdown body; Arabic body is rendered when absent' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200_000)
+  bodyEn?: string;
 
   @IsOptional()
   @IsString()

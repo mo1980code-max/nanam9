@@ -21,6 +21,8 @@
 
 import { cache } from 'react';
 
+import type { Locale } from '@/lib/i18n';
+
 // The canonical sort vocabulary lives in the shared package so the API's validation,
 // the admin UI and this app cannot drift apart. Re-exported here so pages have one
 // import source for everything data-shaped.
@@ -132,7 +134,9 @@ export type PostCard = {
   id: string;
   slug: string;
   title: string;
+  titleEn: string | null;
   excerpt: string | null;
+  excerptEn: string | null;
   coverImage: string | null;
   url: string;
   author: { username: string; displayName: string | null; avatarUrl: string | null } | null;
@@ -147,6 +151,7 @@ export type PostCard = {
 
 export type PostView = PostCard & {
   body: string;
+  bodyEn: string | null;
   tags: Term[];
   seo: { title: string | null; description: string | null; canonical: string | null; robots: string };
   jsonLd: Record<string, unknown>[];
@@ -376,6 +381,8 @@ export type GameQuery = {
   featured?: boolean;
   orientation?: string;
   ageRating?: string;
+  /** Sent as ?lang= so the API localizes descriptions/SEO/related server-side. */
+  locale?: Locale;
 };
 
 export const listGames = cache(async (query: GameQuery = {}): Promise<ListResult<GameCard>> => {
@@ -392,14 +399,18 @@ export const listGames = cache(async (query: GameQuery = {}): Promise<ListResult
       featured: query.featured === undefined ? undefined : query.featured ? 'true' : undefined,
       orientation: query.orientation,
       ageRating: query.ageRating,
+      lang: query.locale,
     })}`,
     { revalidate: 30, tags: ['games'] },
   );
   return unwrapList<GameCard>(envelope?.data, { page, perPage }, envelope?.meta);
 });
 
-export const getGame = cache(async (slug: string): Promise<GamePage | null> =>
-  getJsonStrict<GamePage>(`/games/${encodeURIComponent(slug)}`, { revalidate: 60, tags: ['games', `game:${slug}`] }),
+export const getGame = cache(async (slug: string, locale: Locale = 'ar'): Promise<GamePage | null> =>
+  getJsonStrict<GamePage>(`/games/${encodeURIComponent(slug)}${locale === 'en' ? '?lang=en' : ''}`, {
+    revalidate: 60,
+    tags: ['games', `game:${slug}`],
+  }),
 );
 
 export const searchGames = cache(async (term: string, limit = 8): Promise<GameCard[]> => {

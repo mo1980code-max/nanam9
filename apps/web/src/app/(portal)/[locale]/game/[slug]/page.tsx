@@ -27,12 +27,16 @@ type Params = { locale: string; slug: string };
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const { locale: raw, slug } = await params;
   const locale: Locale = isLocale(raw) ? raw : 'ar';
-  const result = await getGame(slug);
+  const result = await getGame(slug, locale);
   if (!result) return { title: t(locale, 'game.notFound') };
 
   const game = result.game;
   const title = pick(locale, game.seo?.title || game.title, game.titleEn);
+  // `game.description` arrives already locale-resolved from the API (?lang=en).
+  // On /en it beats the curated Arabic SEO text — an English meta description
+  // for an English page, falling back to the Arabic one when untranslated.
   const description =
+    (locale === 'en' ? game.description?.slice(0, 200) : game.seo?.description) ||
     game.seo?.description ||
     game.description?.slice(0, 200) ||
     t(locale, 'game.defaultDescription', { title });
@@ -67,7 +71,7 @@ export default async function GamePage({ params }: { params: Promise<Params> }) 
   if (!isLocale(raw)) notFound();
   const locale: Locale = raw;
 
-  const result = await getGame(slug);
+  const result = await getGame(slug, locale);
   if (!result) notFound();
 
   const { game, related = [], trail = [], viewer } = result;
