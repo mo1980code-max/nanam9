@@ -87,7 +87,14 @@ export function SiteFooter({ locale, siteName, tagline, categories, pages }: Pro
       </div>
 
       <div className="border-t border-line px-4 py-5">
-        <p className="mx-auto max-w-7xl text-center text-xs text-muted">{t(locale, 'footer.rights', { year, site: siteName })}</p>
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-muted">
+          <p>{t(locale, 'footer.rights', { year, site: siteName })}</p>
+          {/* The admin entrance lives in the footer, not the header: operators
+              need it one click away, visitors should not be navigated to it. */}
+          <Link href="/admin/login" className="font-bold text-muted underline decoration-dotted underline-offset-4 transition hover:text-brand" aria-label={t(locale, 'footer.admin')}>
+            🔐 {t(locale, 'footer.admin')}
+          </Link>
+        </div>
       </div>
     </footer>
   );
