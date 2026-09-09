@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>مولّد الطاقة — العب مجانًا | Voltade</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0b12; overflow: hidden; font-family: system-ui, "Segoe UI", sans-serif; }
+  #wrap { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; box-sizing: border-box; }
+  #hud { display: flex; align-items: center; gap: 12px; color: #e8e8f2; font-weight: 800; font-size: 14px; min-height: 22px; }
+  #hud button { background: #7c3aed; border: 0; color: #fff; border-radius: 10px; padding: 6px 16px; font: inherit; font-weight: 800; cursor: pointer; }
+  canvas { background: #141422; border-radius: 14px; touch-action: none; max-width: 100%; max-height: calc(100% - 44px); box-shadow: 0 12px 44px #0007; }
+  #msg { position: fixed; inset: 0; display: none; place-items: center; background: #000b; color: #fff; z-index: 5; }
+  #msg div { display: grid; gap: 14px; justify-items: center; font-size: 24px; font-weight: 900; text-align: center; padding: 20px; }
+  #msg button { background: #7c3aed; border: 0; color: #fff; border-radius: 12px; padding: 10px 26px; font: inherit; font-weight: 800; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud"><span id="score"></span><span id="best"></span><button id="again" type="button">↺ إعادة</button></div>
+  <canvas id="c" width="560" height="620"></canvas>
+</div>
+<div id="msg"><div><span id="msgText"></span><button id="msgBtn" type="button">العب من جديد</button></div></div>
+<script>
+
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const $ = (id) => document.getElementById(id);
+let paused = false, score = 0;
+const BKEY = 'voltade-best-' + location.pathname;
+const readBest = () => Number(localStorage.getItem(BKEY) || 0);
+const showBest = (v) => { $('best').textContent = v ? ('أفضل نتيجة: ' + v) : ''; };
+function setScore(text) { $('score').textContent = text; }
+function gameOver(text, finalScore) {
+  paused = true;
+  if (typeof finalScore === 'number') showBest(Math.max(readBest(), finalScore));
+  $('msgText').textContent = text;
+  $('msg').style.display = 'grid';
+}
+$('again').onclick = () => location.reload();
+$('msgBtn').onclick = () => location.reload();
+showBest(readBest());
+const keys = {};
+addEventListener('keydown', (e) => {
+  keys[e.key] = true;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+});
+addEventListener('keyup', (e) => { keys[e.key] = false; });
+let pointer = null, pointerDown = false, tap = null;
+const toLogical = (e) => {
+  const r = cv.getBoundingClientRect();
+  return [ (e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height) ];
+};
+cv.addEventListener('pointerdown', (e) => { pointerDown = true; pointer = toLogical(e); tap = pointer; e.preventDefault(); });
+cv.addEventListener('pointermove', (e) => { pointer = toLogical(e); });
+addEventListener('pointerup', () => { pointerDown = false; });
+let swipe = null, touchOrigin = null;
+cv.addEventListener('touchstart', (e) => { touchOrigin = [e.touches[0].clientX, e.touches[0].clientY]; }, { passive: true });
+cv.addEventListener('touchend', (e) => {
+  if (!touchOrigin) return;
+  const dx = e.changedTouches[0].clientX - touchOrigin[0];
+  const dy = e.changedTouches[0].clientY - touchOrigin[1];
+  if (Math.abs(dx) > 24 || Math.abs(dy) > 24) swipe = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+  touchOrigin = null;
+}, { passive: true });
+const takeSwipe = () => { const s = swipe; swipe = null; return s; };
+const takeTap = () => { const t = tap; tap = null; return t; };
+const rnd = (n) => Math.floor(Math.random() * n);
+const FONT = (px, weight) => (weight || 700) + ' ' + px + 'px system-ui, "Segoe UI", sans-serif';
+
+
+let count = 0, perClick = 1, perSec = 0, upgrades = [{"name":"بطارية (+1/نقرة)","base":20,"owned":0,"kind":"click","power":1},{"name":"لوح شمسي (+2/ث)","base":80,"owned":0,"kind":"auto","power":2},{"name":"مفاعل (+8/ث)","base":500,"owned":0,"kind":"auto","power":8}];
+const BTN = { x: W / 2, y: H / 2 - 20, r: Math.min(W, H) * 0.24 };
+function priceOf(u) { return Math.ceil(u.base * Math.pow(1.6, u.owned)); }
+cv.addEventListener('pointerdown', (e) => { if (paused) return; const [x, y2] = toLogical(e);
+  if (Math.hypot(x - BTN.x, y2 - BTN.y) < BTN.r) { count += perClick; ping(x, y2); }
+  upgrades.forEach((u, i) => { const [ux, uy] = upXY(i); if (x > ux && x < ux + 210 && y2 > uy && y2 < uy + 46 && count >= priceOf(u)) { count -= priceOf(u); u.owned++; if (u.kind === 'click') perClick += u.power; else perSec += u.power; } });
+  hud(); });
+let pings = [];
+function ping(x, y2) { pings.push({ x, y: y2, t: Date.now() }); }
+function upXY(i) { return [16, H - 56 - i * 54]; }
+function hud() { setScore('⚡ ' + Math.floor(count) + ' — لكل نقرة ' + perClick + ' — تلقائي ' + perSec + '/ث'); }
+setInterval(() => { if (!paused && perSec) { count += perSec / 4; hud(); } }, 250);
+function draw() {
+  cx.fillStyle = '#141422'; cx.fillRect(0, 0, W, H);
+  cx.fillStyle = '#7c3aed'; cx.beginPath(); cx.arc(BTN.x, BTN.y, BTN.r, 0, 7); cx.fill();
+  cx.font = FONT(BTN.r * 0.9); cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText('⚡', BTN.x, BTN.y);
+  cx.font = FONT(15); cx.textAlign = 'right';
+  upgrades.forEach((u, i) => { const [ux, uy] = upXY(i); const afford = count >= priceOf(u);
+    cx.fillStyle = afford ? '#7c3aed' : '#ffffff22'; cx.beginPath(); cx.roundRect(ux, uy, 210, 46, 10); cx.fill();
+    cx.fillStyle = '#fff'; cx.textAlign = 'center'; cx.fillText(u.name + ' (' + priceOf(u) + ')', ux + 105, uy + 23); });
+  pings = pings.filter(p2 => Date.now() - p2.t < 700);
+  cx.fillStyle = '#fff'; cx.font = FONT(20);
+  pings.forEach(p2 => cx.fillText('+' + perClick, p2.x, p2.y - (Date.now() - p2.t) / 18));
+}
+setInterval(() => { if (!paused) draw(); }, 40);
+hud();
+
+</script>
+</body>
+</html>

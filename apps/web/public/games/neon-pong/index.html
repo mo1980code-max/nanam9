@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>Neon Pong</title>
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#070b18;overflow:hidden;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  #wrap{position:fixed;inset:0;display:grid;place-items:center}
+  canvas{display:block;width:100%;height:100%;touch-action:none;background:
+    radial-gradient(1200px 600px at 50% 0%,#12204a 0%,#070b18 60%)}
+  #hud{position:fixed;top:12px;left:0;right:0;display:flex;justify-content:center;gap:28px;
+    font-weight:800;font-size:clamp(20px,5vw,40px);color:#e8f0ff;text-shadow:0 0 18px #4f7cff;pointer-events:none}
+  #msg{position:fixed;inset:auto 0 18px 0;text-align:center;color:#9fb2e6;font-size:14px;letter-spacing:.4px;pointer-events:none}
+  #start{position:fixed;inset:0;display:grid;place-items:center;background:rgba(4,8,20,.72);backdrop-filter:blur(4px)}
+  #start button{padding:14px 34px;border:0;border-radius:999px;font-size:18px;font-weight:800;cursor:pointer;
+    background:linear-gradient(135deg,#4f7cff,#9a5cff);color:#fff;box-shadow:0 10px 40px rgba(79,124,255,.45)}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="hud"><span id="p">0</span><span id="a">0</span></div>
+<div id="msg">W/S · ↑/↓ · أو اسحب إصبعك — أول من يصل إلى ٧ يفوز</div>
+<div id="start"><button id="go">ابدأ اللعب · Play</button></div>
+<script>
+/* Voltade demo build — a self-contained HTML5 game, the same shape a provider
+   ZIP would produce: one file, no external requests, and a postMessage bridge so
+   the portal can react to score/complete events (XP, leaderboards, interstitial). */
+(function () {
+  var host = window.parent !== window ? window.parent : null;
+  function post(m) { try { host && host.postMessage(Object.assign({ source: 'voltade-game' }, m), '*'); } catch (e) {} }
+
+  var c = document.getElementById('c'), x = c.getContext('2d');
+  var W = 0, H = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  function resize() { W = c.clientWidth; H = c.clientHeight; c.width = W * dpr; c.height = H * dpr; x.setTransform(dpr, 0, 0, dpr, 0, 0); PH = Math.max(60, H * 0.18); }
+  window.addEventListener('resize', resize);
+
+  var PH = 90, PW = 10, py = 0, ay = 0, bx = 0, by = 0, vx = 0, vy = 0, ps = 0, as = 0, run = false, spin = 0;
+  resize();
+
+  function reset(dir) {
+    bx = W / 2; by = H / 2;
+    var a = Math.random() * 0.5 - 0.25, s = Math.min(9, W * 0.0075 + 4);
+    vx = Math.cos(a) * s * (dir || 1); vy = Math.sin(a) * s; spin = 0;
+  }
+  function hud() { document.getElementById('p').textContent = ps; document.getElementById('a').textContent = as; }
+  function start() {
+    ps = 0; as = 0; hud(); reset(1); run = true;
+    document.getElementById('start').classList.add('hidden');
+    document.getElementById('msg').textContent = 'W/S · ↑/↓ · أو اسحب إصبعك — أول من يصل إلى ٧ يفوز';
+    post({ type: 'voltade:ready' }); loop();
+  }
+  function point(who) {
+    if (who === 'p') ps++; else as++;
+    hud(); post({ type: 'voltade:score', score: ps });
+    if (ps >= 7 || as >= 7) {
+      run = false;
+      document.getElementById('msg').textContent = (ps > as ? 'فزت! 🎉 ' : 'خسرت — ') + ps + ' : ' + as;
+      document.getElementById('start').classList.remove('hidden');
+      document.getElementById('go').textContent = 'العب مجددًا · Again';
+      post({ type: 'voltade:complete', score: ps, won: ps > as });
+      return;
+    }
+    reset(who === 'p' ? -1 : 1);
+  }
+  function loop() {
+    if (!run) return;
+    py = Math.max(0, Math.min(H - PH, py));
+    ay += ((by - PH / 2) - ay) * 0.075;
+    ay = Math.max(0, Math.min(H - PH, ay));
+    bx += vx; by += vy;
+    if (by < 6 || by > H - 6) { vy *= -1; by = Math.max(6, Math.min(H - 6, by)); }
+    if (bx < PW + 18 && bx > 6 && by > py && by < py + PH) {
+      var o = (by - (py + PH / 2)) / (PH / 2);
+      vx = Math.abs(vx) * 1.045; vy = o * Math.min(9, vx * 0.9) + spin; bx = PW + 18;
+      post({ type: 'voltade:hit', side: 'player' });
+    }
+    if (bx > W - PW - 18 && bx < W - 6 && by > ay && by < ay + PH) {
+      var o2 = (by - (ay + PH / 2)) / (PH / 2);
+      vx = -Math.abs(vx) * 1.045; vy = o2 * Math.min(9, -vx * 0.9); bx = W - PW - 18;
+    }
+    if (bx < -20) point('a');
+    if (bx > W + 20) point('p');
+    x.clearRect(0, 0, W, H);
+    x.strokeStyle = 'rgba(150,180,255,.16)'; x.lineWidth = 2; x.setLineDash([10, 14]);
+    x.beginPath(); x.moveTo(W / 2, 0); x.lineTo(W / 2, H); x.stroke(); x.setLineDash([]);
+    x.shadowBlur = 22; x.shadowColor = '#4f7cff'; x.fillStyle = '#dbe6ff'; x.fillRect(8, py, PW, PH);
+    x.shadowColor = '#ff4f8b'; x.fillStyle = '#ffd9e6'; x.fillRect(W - 8 - PW, ay, PW, PH);
+    x.shadowColor = '#9a5cff'; x.fillStyle = '#fff'; x.beginPath(); x.arc(bx, by, 7, 0, 7); x.fill(); x.shadowBlur = 0;
+    requestAnimationFrame(loop);
+  }
+  window.addEventListener('keydown', function (e) {
+    var k = e.key.toLowerCase();
+    if (k === 'w' || k === 'arrowup') { py -= 34; e.preventDefault(); }
+    if (k === 's' || k === 'arrowdown') { py += 34; e.preventDefault(); }
+  });
+  function move(clientY) { var r = c.getBoundingClientRect(); py = clientY - r.top - PH / 2; }
+  c.addEventListener('pointermove', function (e) { move(e.clientY); });
+  c.addEventListener('pointerdown', function (e) { move(e.clientY); });
+  var lastY = 0;
+  c.addEventListener('touchstart', function (e) { lastY = e.touches[0].clientY; }, { passive: true });
+  c.addEventListener('touchmove', function (e) {
+    var t = e.touches[0]; if (!t) return;
+    spin = (t.clientY - lastY) * 0.35; lastY = t.clientY; move(t.clientY); e.preventDefault();
+  }, { passive: false });
+  document.getElementById('go').addEventListener('click', start);
+  post({ type: 'voltade:ready' });
+})();
+</script>
+</body>
+</html>

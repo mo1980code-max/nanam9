@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#020617"/><stop offset="1" stop-color="#0f172a"/></linearGradient></defs>
+  <rect width="1200" height="630" fill="url(#g)"/>
+  <circle cx="1020" cy="120" r="220" fill="#38bdf8" opacity="0.2"/>
+  <circle cx="150" cy="540" r="170" fill="#f472b6" opacity="0.14"/>
+  <text x="600" y="330" font-size="190" text-anchor="middle">🥇</text>
+  <text x="600" y="490" font-size="64" font-weight="700" text-anchor="middle" fill="#e2e8f0" font-family="system-ui, sans-serif">بونج المحترفين</text>
+  <text x="600" y="560" font-size="30" text-anchor="middle" fill="#e2e8f0" opacity="0.7" font-family="system-ui, sans-serif">Pong Pro — Voltade</text>
+</svg>

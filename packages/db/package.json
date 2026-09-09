@@ -1,0 +1,89 @@
+{
+  "name": "@voltade/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./passwords": {
+      "types": "./dist/passwords.d.ts",
+      "default": "./dist/passwords.js"
+    },
+    "./seed": {
+      "types": "./dist/seed/cli.d.ts",
+      "default": "./dist/seed/cli.js"
+    },
+    "./migrate": {
+      "types": "./dist/migrate/cli.d.ts",
+      "default": "./dist/migrate/cli.js"
+    },
+    "./pglite": {
+      "types": "./dist/dev/pglite-server.d.ts",
+      "default": "./dist/dev/pglite-server.js"
+    },
+    "./prisma": {
+      "types": "./dist/drivers/prisma/index.d.ts",
+      "default": "./dist/drivers/prisma/index.js"
+    },
+    "./seed/content": {
+      "types": "./dist/seed/content.d.ts",
+      "default": "./dist/seed/content.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:prisma-driver": "tsc -p tsconfig.prisma.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "sql:generate": "node --enable-source-maps dist/tools/generate-cli.js",
+    "sql:check": "node --enable-source-maps dist/tools/generate-cli.js --check",
+    "columns:generate": "node --enable-source-maps dist/tools/column-types-cli.js",
+    "columns:check": "node --enable-source-maps dist/tools/column-types-cli.js --check",
+    "sql:diff:prisma": "prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script",
+    "pglite:server": "node --enable-source-maps dist/dev/pglite-cli.js",
+    "migrate": "node --enable-source-maps dist/migrate/cli.js",
+    "seed": "node --enable-source-maps dist/seed/cli.js",
+    "reset": "node --enable-source-maps dist/migrate/cli.js --reset && node --enable-source-maps dist/seed/cli.js",
+    "generate": "prisma generate --schema prisma/schema.prisma",
+    "studio": "prisma studio --schema prisma/schema.prisma",
+    "migrate:prisma": "prisma migrate deploy --schema prisma/schema.prisma",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.2.0",
+    "@voltade/shared": "*",
+    "dotenv": "^17.4.2",
+    "pg": "^8.23.0"
+  },
+  "optionalDependencies": {
+    "@prisma/client": "^6.19.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-socket": "^0.2.11",
+    "@types/node": "^22.20.1",
+    "@types/pg": "^8.23.1",
+    "prisma": "^6.19.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "typesVersions": {
+    "*": {
+      "passwords": [
+        "dist/passwords.d.ts"
+      ],
+      "seed/content": [
+        "dist/seed/content.d.ts"
+      ],
+      "connection": [
+        "dist/connection.d.ts"
+      ]
+    }
+  }
+}

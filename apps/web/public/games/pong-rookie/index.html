@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>بونج للمبتدئين — العب مجانًا | Voltade</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #fff1f2; overflow: hidden; font-family: system-ui, "Segoe UI", sans-serif; }
+  #wrap { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; box-sizing: border-box; }
+  #hud { display: flex; align-items: center; gap: 12px; color: #881337; font-weight: 800; font-size: 14px; min-height: 22px; }
+  #hud button { background: #f43f5e; border: 0; color: #fff; border-radius: 10px; padding: 6px 16px; font: inherit; font-weight: 800; cursor: pointer; }
+  canvas { background: #ffe4e6; border-radius: 14px; touch-action: none; max-width: 100%; max-height: calc(100% - 44px); box-shadow: 0 12px 44px #0007; }
+  #msg { position: fixed; inset: 0; display: none; place-items: center; background: #000b; color: #fff; z-index: 5; }
+  #msg div { display: grid; gap: 14px; justify-items: center; font-size: 24px; font-weight: 900; text-align: center; padding: 20px; }
+  #msg button { background: #f43f5e; border: 0; color: #fff; border-radius: 12px; padding: 10px 26px; font: inherit; font-weight: 800; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud"><span id="score"></span><span id="best"></span><button id="again" type="button">↺ إعادة</button></div>
+  <canvas id="c" width="720" height="480"></canvas>
+</div>
+<div id="msg"><div><span id="msgText"></span><button id="msgBtn" type="button">العب من جديد</button></div></div>
+<script>
+
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const $ = (id) => document.getElementById(id);
+let paused = false, score = 0;
+const BKEY = 'voltade-best-' + location.pathname;
+const readBest = () => Number(localStorage.getItem(BKEY) || 0);
+const showBest = (v) => { $('best').textContent = v ? ('أفضل نتيجة: ' + v) : ''; };
+function setScore(text) { $('score').textContent = text; }
+function gameOver(text, finalScore) {
+  paused = true;
+  if (typeof finalScore === 'number') showBest(Math.max(readBest(), finalScore));
+  $('msgText').textContent = text;
+  $('msg').style.display = 'grid';
+}
+$('again').onclick = () => location.reload();
+$('msgBtn').onclick = () => location.reload();
+showBest(readBest());
+const keys = {};
+addEventListener('keydown', (e) => {
+  keys[e.key] = true;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+});
+addEventListener('keyup', (e) => { keys[e.key] = false; });
+let pointer = null, pointerDown = false, tap = null;
+const toLogical = (e) => {
+  const r = cv.getBoundingClientRect();
+  return [ (e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height) ];
+};
+cv.addEventListener('pointerdown', (e) => { pointerDown = true; pointer = toLogical(e); tap = pointer; e.preventDefault(); });
+cv.addEventListener('pointermove', (e) => { pointer = toLogical(e); });
+addEventListener('pointerup', () => { pointerDown = false; });
+let swipe = null, touchOrigin = null;
+cv.addEventListener('touchstart', (e) => { touchOrigin = [e.touches[0].clientX, e.touches[0].clientY]; }, { passive: true });
+cv.addEventListener('touchend', (e) => {
+  if (!touchOrigin) return;
+  const dx = e.changedTouches[0].clientX - touchOrigin[0];
+  const dy = e.changedTouches[0].clientY - touchOrigin[1];
+  if (Math.abs(dx) > 24 || Math.abs(dy) > 24) swipe = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+  touchOrigin = null;
+}, { passive: true });
+const takeSwipe = () => { const s = swipe; swipe = null; return s; };
+const takeTap = () => { const t = tap; tap = null; return t; };
+const rnd = (n) => Math.floor(Math.random() * n);
+const FONT = (px, weight) => (weight || 700) + ' ' + px + 'px system-ui, "Segoe UI", sans-serif';
+
+
+let py = H / 2, ay = H / 2, ball = { x: W / 2, y: H / 2, vx: 4, vy: 4 * 0.6 }, me = 0, ai = 0;
+const PH = 120 , AI = 2.6;
+function step() {
+  if (pointer) py = pointer[1];
+  if (keys.ArrowUp) py -= 10; if (keys.ArrowDown) py += 10;
+  py = Math.max(PH / 2, Math.min(H - PH / 2, py));
+  ay += Math.max(-AI, Math.min(AI, ball.y - ay));
+  ball.x += ball.vx; ball.y += ball.vy;
+  if (ball.y < 8 || ball.y > H - 8) ball.vy *= -1;
+  if (ball.x < 26 && ball.y > py - PH / 2 && ball.y < py + PH / 2) { ball.vx = Math.abs(ball.vx) * 1.05; ball.vy += (ball.y - py) * 0.08; }
+  if (ball.x > W - 26 && ball.y > ay - PH / 2 && ball.y < ay + PH / 2) { ball.vx = -Math.abs(ball.vx) * 1.05; }
+  if (ball.x < -20) { ai++; reset(1); } if (ball.x > W + 20) { me++; reset(-1); }
+  setScore('🟢 أنت ' + me + ' — ' + ai + ' ');
+  if (me >= 5) gameOver('🏆 فزت ' + me + '‑' + ai, me * 100);
+  if (ai >= 5) gameOver('🤖 خسرنا ' + me + '‑' + ai, me * 100);
+}
+function reset(d) { ball = { x: W / 2, y: H / 2, vx: 4 * d, vy: (Math.random() - .5) * 6 }; }
+function draw() {
+  cx.fillStyle = '#ffe4e6'; cx.fillRect(0, 0, W, H);
+  cx.strokeStyle = '#ffffff22'; cx.setLineDash([8, 10]); cx.beginPath(); cx.moveTo(W / 2, 0); cx.lineTo(W / 2, H); cx.stroke(); cx.setLineDash([]);
+  cx.fillStyle = '#f43f5e'; cx.fillRect(14, py - PH / 2, 10, PH);
+  cx.fillStyle = '#0ea5e9'; cx.fillRect(W - 24, ay - PH / 2, 10, PH);
+  cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(ball.x, ball.y, 8, 0, 7); cx.fill();
+}
+setInterval(() => { if (paused) return; step(); draw(); }, 16);
+
+</script>
+</body>
+</html>

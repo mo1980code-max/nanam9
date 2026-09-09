@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Voltade">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0820"/>
+      <stop offset="1" stop-color="#131a3a"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="1020" cy="120" r="220" fill="#7c3aed" opacity="0.18"/>
+  <circle cx="160" cy="540" r="200" fill="#22d3ee" opacity="0.14"/>
+  <rect x="90" y="200" width="150" height="150" rx="42" fill="url(#bolt)"/>
+  <path d="M165 235l34 58h-24l19 38-52-62h24l-19-34z" fill="#fff"/>
+  <text x="290" y="300" font-family="Cairo, Segoe UI, system-ui, sans-serif" font-size="86" font-weight="800" fill="#f2f3ff">Voltade</text>
+  <text x="292" y="368" font-family="Cairo, Segoe UI, system-ui, sans-serif" font-size="38" fill="#9ea2c8">بوابة ألعاب HTML5 — العب فورًا بدون تحميل</text>
+</svg>

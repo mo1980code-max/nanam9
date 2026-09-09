@@ -1,0 +1,10 @@
+{
+  "//": "Compiled only where `prisma generate` could run (docker / CI / developer machines). The sandbox that produced this repo cannot reach binaries.prisma.sh, so the Prisma driver is excluded from the default build and proven by the `db:prisma-driver` CI job instead.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

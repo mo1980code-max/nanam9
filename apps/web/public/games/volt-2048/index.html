@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>Volt 2048</title>
+<style>
+  :root{color-scheme:dark;--gap:10px}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#0d1020;color:#eef1ff;overflow:hidden;
+    font-family:system-ui,"Segoe UI",Roboto,sans-serif}
+  #app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:14px}
+  #top{display:flex;gap:12px;align-items:center;justify-content:space-between;width:min(94vw,460px)}
+  h1{font-size:clamp(22px,6vw,34px);background:linear-gradient(135deg,#7aa2ff,#c98bff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .pill{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:6px 12px;font-weight:700;font-size:14px}
+  #board{position:relative;width:min(94vw,460px);aspect-ratio:1;background:rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.09);border-radius:18px;padding:var(--gap);touch-action:none}
+  .cell{position:absolute;background:rgba(255,255,255,.05);border-radius:12px}
+  .tile{position:absolute;display:grid;place-items:center;border-radius:12px;font-weight:800;
+    transition:transform .11s ease,background .15s ease;box-shadow:0 6px 22px rgba(0,0,0,.35)}
+  #over{position:absolute;inset:0;display:none;place-items:center;background:rgba(6,9,22,.86);border-radius:18px;text-align:center}
+  #over.show{display:grid}
+  button{margin-top:12px;padding:12px 26px;border:0;border-radius:999px;font:800 16px system-ui;cursor:pointer;color:#0d1020;
+    background:linear-gradient(135deg,#8ef0c1,#7aa2ff)}
+  #hint{opacity:.65;font-size:13px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <h1>Volt 2048</h1>
+    <div style="display:flex;gap:8px"><span class="pill" id="score">0</span><span class="pill" id="best">أفضل 0</span></div>
+  </div>
+  <div id="board"><div id="over"><div><div style="font-size:22px;font-weight:800" id="overTitle">انتهت اللعبة</div>
+    <button id="again">لعبة جديدة</button></div></div></div>
+  <div id="hint">اسحب بإصبعك أو استخدم الأسهم · ادمج الأرقام لتصل إلى ٢٠٤٨</div>
+</div>
+<script>
+(function () {
+  var host = window.parent !== window ? window.parent : null;
+  function post(m) { try { host && host.postMessage(Object.assign({ source: 'voltade-game' }, m), '*'); } catch (e) {} }
+
+  var N = 4, board = [], score = 0, best = Number(localStorage.getItem('voltade.2048.best') || 0), won = false;
+  var el = document.getElementById('board');
+  document.getElementById('best').textContent = 'أفضل ' + best;
+
+  function newGame() {
+    board = Array.from({ length: N }, function () { return Array(N).fill(0); });
+    score = 0; won = false;
+    document.getElementById('over').classList.remove('show');
+    add(); add(); render(); post({ type: 'voltade:ready' });
+  }
+  function add() {
+    var free = [];
+    for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) if (!board[r][c]) free.push([r, c]);
+    if (!free.length) return;
+    var p = free[(Math.random() * free.length) | 0];
+    board[p[0]][p[1]] = Math.random() < 0.9 ? 2 : 4;
+  }
+  function slide(line) {
+    var a = line.filter(function (v) { return v; }), out = [], gained = 0;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] === a[i + 1]) { out.push(a[i] * 2); gained += a[i] * 2; i++; }
+      else out.push(a[i]);
+    }
+    while (out.length < N) out.push(0);
+    return { line: out, gained: gained };
+  }
+  function move(dir) {
+    var before = JSON.stringify(board), gained = 0;
+    function rows() { return board.map(function (r) { return r.slice(); }); }
+    function write(m) { board = m; }
+    function rotate(m) { return m[0].map(function (_, i) { return m.map(function (r) { return r[i]; }).reverse(); }); }
+    var work = rows(), turns = { left: 0, up: 1, right: 2, down: 3 }[dir];
+    for (var t = 0; t < turns; t++) work = rotate(work);
+    work = work.map(function (line) { var r = slide(line); gained += r.gained; return r.line; });
+    for (var t2 = 0; t2 < (4 - turns) % 4; t2++) work = rotate(work);
+    write(work);
+    if (JSON.stringify(board) === before) return;
+    score += gained;
+    add(); render();
+    post({ type: 'voltade:score', score: score });
+    if (!won && board.some(function (r) { return r.some(function (v) { return v >= 2048; }); })) {
+      won = true; post({ type: 'voltade:complete', score: score, won: true });
+    }
+    if (isOver()) {
+      if (score > best) { best = score; localStorage.setItem('voltade.2048.best', String(best)); document.getElementById('best').textContent = 'أفضل ' + best; }
+      document.getElementById('overTitle').textContent = 'انتهت اللعبة — ' + score;
+      document.getElementById('over').classList.add('show');
+      post({ type: 'voltade:complete', score: score, won: won });
+    }
+  }
+  function isOver() {
+    for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) {
+      if (!board[r][c]) return false;
+      if (c + 1 < N && board[r][c] === board[r][c + 1]) return false;
+      if (r + 1 < N && board[r][c] === board[r + 1][c]) return false;
+    }
+    return true;
+  }
+  function color(v) {
+    var map = { 2: '#2a3157', 4: '#33406f', 8: '#3f5aa8', 16: '#4f7cff', 32: '#6f5cff', 64: '#9a5cff',
+      128: '#c05cff', 256: '#ff5ea8', 512: '#ff7a5e', 1024: '#ffb03a', 2048: '#ffe066' };
+    return map[v] || '#fff0a8';
+  }
+  function render() {
+    document.getElementById('score').textContent = score;
+    el.querySelectorAll('.cell,.tile').forEach(function (n) { n.remove(); });
+    var size = el.clientWidth, gap = 10, cell = (size - gap * (N + 1)) / N;
+    for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) {
+      var bg = document.createElement('div'); bg.className = 'cell';
+      bg.style.cssText = 'width:' + cell + 'px;height:' + cell + 'px;left:' + (gap + c * (cell + gap)) + 'px;top:' + (gap + r * (cell + gap)) + 'px';
+      el.appendChild(bg);
+      var v = board[r][c];
+      if (!v) continue;
+      var t = document.createElement('div'); t.className = 'tile'; t.textContent = v;
+      var fs = v < 100 ? cell * 0.44 : v < 1000 ? cell * 0.36 : cell * 0.29;
+      t.style.cssText = 'width:' + cell + 'px;height:' + cell + 'px;left:' + (gap + c * (cell + gap)) + 'px;top:' +
+        (gap + r * (cell + gap)) + 'px;background:' + color(v) + ';font-size:' + fs + 'px;color:' + (v > 512 ? '#20140a' : '#fff');
+      el.appendChild(t);
+    }
+  }
+  window.addEventListener('keydown', function (e) {
+    var m = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
+    if (m) { move(m); e.preventDefault(); }
+  });
+  var sx = 0, sy = 0;
+  el.addEventListener('touchstart', function (e) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+  el.addEventListener('touchend', function (e) {
+    var dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 22) return;
+    move(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
+  }, { passive: true });
+  document.getElementById('again').addEventListener('click', newGame);
+  window.addEventListener('resize', render);
+  newGame();
+})();
+</script>
+</body>
+</html>
