@@ -282,10 +282,20 @@ export class PgEngagementRepository extends PgRepo implements EngagementReposito
   async gameStats(gameId: ID, range?: StatsRange): Promise<{ day: string; plays: number; uniqueVisitors: number }[]> {
     const to = range?.to ?? new Date();
     const from = range?.from ?? new Date(to.getTime() - 29 * DAY_MS);
+    // Charts need a point for quiet days too. Returning only days that have a
+    // rollup makes a perfectly healthy game look as if its analytics stopped;
+    // the calendar series is cheap (at most 31 rows) and keeps the client free
+    // from date-gap interpolation logic.
     return this.conn.many(
-      `SELECT to_char(day, 'YYYY-MM-DD') AS day, plays, unique_visitors AS "uniqueVisitors"
-         FROM daily_stats WHERE dimension = 'game' AND game_id = $1 AND day >= $2::date AND day <= $3::date
-        ORDER BY day`,
+      `SELECT to_char(series.day, 'YYYY-MM-DD') AS day,
+              coalesce(ds.plays, 0)::int AS plays,
+              coalesce(ds.unique_visitors, 0)::int AS "uniqueVisitors"
+         FROM generate_series($2::date, $3::date, interval '1 day') AS series(day)
+         LEFT JOIN daily_stats ds
+           ON ds.day = series.day::date
+          AND ds.dimension = 'game'
+          AND ds.game_id = $1
+        ORDER BY series.day`,
       [gameId, from, to],
     );
   }

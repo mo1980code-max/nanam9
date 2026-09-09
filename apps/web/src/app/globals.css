@@ -253,8 +253,6 @@
     line-height: 2;
     font-size: 1.02rem;
   }
-  because a global
-     element selector here would fight every component in the app. */
   .prose-en {
     color: var(--text);
     line-height: 2;

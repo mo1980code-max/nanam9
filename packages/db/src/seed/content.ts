@@ -603,8 +603,15 @@ export async function seedDatabase(db: Database, options: SeedOptions = {}): Pro
   // 6. Games.
   const gameIds = new Map<string, ID>();
   if (demo) {
-    const ALL_GAMES: DemoGame[] = [...DEMO_GAMES, ...(LIBRARY_GAMES as unknown as readonly DemoGame[])];
-    for (const g of ALL_GAMES) {
+    // Keep the six curated builds as the default demo catalogue. The generated
+    // library is intentionally opt-in: it contains a much larger showcase set,
+    // while the first-run seed is also used by smoke tests and screenshots that
+    // promise a small, predictable catalogue. Operators who want every generated
+    // build can opt in with SEED_FULL_LIBRARY=1.
+    const allGames: DemoGame[] = process.env.SEED_FULL_LIBRARY === '1'
+      ? [...DEMO_GAMES, ...(LIBRARY_GAMES as unknown as readonly DemoGame[])]
+      : DEMO_GAMES;
+    for (const g of allGames) {
       const existing = await db.catalog.findGameBySlug(g.slug);
       if (existing) {
         gameIds.set(g.slug, existing.id);
